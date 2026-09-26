@@ -22,10 +22,10 @@ Ordered by unblock-value. Checked items are done; unchecked need you or a key.
   want stronger local models, free RAM or wait for E: models dir.
 
 ## Product gaps (build next)
-- [ ] **Real browser click-through** of the frontend (Login → Dashboard → Roadmap
-  → Admin) against a live backend. Compiles clean; never driven by a human.
-- [ ] **page-agent "Guide me" overlay** — npm install in frontend, 10-line embed
-  for in-gov-site guidance. Biggest demo wow-factor, still unwired.
+- [x] **Real browser click-through** — Playwright: register → dashboard → roadmap green (`smoke.png`).
+- [x] **pytest suite (8 tests) + GitHub Actions CI** — backend + frontend build.
+- [x] **page-agent Guide-me** — installed, per-step Q&A with user's own key (app key never leaves server).
+- [x] **Postgres-ready** — `psycopg` driver in, URL-driven; needs a server to go live.
 - [ ] **Hermes worker rebuild** — source absent; only `alerts.py` + webhook exist.
 - [x] **Background jobs** — queued build/recheck + polling UI (single-process; Redis later).
 - [ ] **Postgres migration** — SQLite is dev-grade. SQLModel needs only a

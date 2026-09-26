@@ -4,3 +4,4 @@ sqlmodel>=0.0.22
 PyJWT>=2.8
 httpx>=0.28
 email-validator>=2.0
+psycopg[binary]>=3.1  # Postgres driver; activate via DATABASE_URL=postgresql://...

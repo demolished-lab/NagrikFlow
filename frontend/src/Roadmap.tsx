@@ -47,6 +47,31 @@ export default function Roadmap({ slug }: { slug: string }) {
   const onNodeClick = useCallback(
     (_: unknown, node: Node) => setSel(all.find((n) => n.id === node.id) || null), [all]);
 
+  const [guide, setGuide] = useState('');
+  const [gq, setGq] = useState('');
+  const [gBusy, setGBusy] = useState(false);
+
+  const askGuide = async () => {
+    // In-page copilot (page-agent lib) answers about THIS step.
+    // Uses the visitor's own key if saved, else falls back to checklist text.
+    const key = localStorage.getItem('guide_key') || '';
+    if (!key || !sel) { setGuide('Save your own LLM key (Guide settings) for AI answers, or follow the checklist below.'); return; }
+    setGBusy(true);
+    try {
+      const { PageAgent } = await import('page-agent');
+      const agent: any = new (PageAgent as any)({
+        model: 'nemotron-3-ultra-free',
+        baseURL: 'https://router.bynara.id/v1',
+        apiKey: key, language: 'en-US',
+      });
+      const ans = await agent.execute(
+        `Civic procedure step: "${sel.title}". Details: ${sel.detail || ''}. ` +
+        `User asks: ${gq || 'Explain this step in plain simple words and list exactly what to carry.'}`);
+      setGuide(String(ans).slice(0, 1200));
+    } catch (e: any) { setGuide('Guide unavailable: ' + String(e.message || e)); }
+    setGBusy(false);
+  };
+
   const markDone = async () => {
     if (!sel) return;
     await api.done(slug, sel.id);
@@ -79,6 +104,21 @@ export default function Roadmap({ slug }: { slug: string }) {
             {sel.fee && <p><b>Fee:</b> {sel.fee}</p>}
             {sel.url && <p><a href={sel.url} target="_blank" rel="noreferrer">Open official site ↗</a></p>}
             <button onClick={markDone}>✓ Mark done</button>
+            <hr />
+            <h4>🧭 Guide me</h4>
+            <input placeholder="Ask about this step…" aria-label="Ask the guide" value={gq}
+              onChange={(e) => setGq(e.target.value)}
+              style={{ width: '100%', padding: 6, marginBottom: 6 }} />
+            <button onClick={askGuide} disabled={gBusy}>{gBusy ? 'Asking…' : 'Ask guide'}</button>
+            {guide && <p><small>{guide}</small></p>}
+            <details>
+              <summary><small>Guide settings (your own key)</small></summary>
+              <input type="password" placeholder="paste LLM key (stored only in this browser)"
+                aria-label="Guide LLM key"
+                defaultValue={localStorage.getItem('guide_key') || ''}
+                onBlur={(e) => localStorage.setItem('guide_key', e.target.value.trim())}
+                style={{ width: '100%', padding: 6 }} />
+            </details>
           </>
         )}
       </div>
