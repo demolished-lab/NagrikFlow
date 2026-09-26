@@ -5,6 +5,8 @@
    saffron energy), glass surfaces, fluid motion.
    ============================================================ */
 
+@import './styles-layout.css';
+
 :root {
   /* Palette */
   --saffron: #f97316;
@@ -131,7 +133,6 @@ button { cursor: pointer; font-family: inherit; }
   box-shadow: 0 0 0 4px rgba(249,115,22,.12);
 }
 
-/* ---- Entrance animations ---- */
 @keyframes cv-fade-up {
   from { opacity: 0; transform: translateY(14px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -168,3 +169,4 @@ button { cursor: pointer; font-family: inherit; }
     #138808 66%, #138808 100%);
   border-radius: 2px;
 }
+

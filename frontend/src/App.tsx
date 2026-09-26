@@ -5,16 +5,24 @@ import Dashboard from './Dashboard';
 import Roadmap from './Roadmap';
 import Admin from './Admin';
 import AgentPanel from './Agent';
-import { api } from './api';
+import HomeView from './HomeView';
 import { STR, lang, setLang, Lang } from './i18n';
 
-type Tab = 'me' | 'roadmap' | 'agent' | 'admin';
+type Tab = 'home' | 'roadmap' | 'civic_twin' | 'agent' | 'admin';
 type AuthState = 'landing' | 'login' | 'app';
+
+const SIDEBAR_ITEMS: { id: Tab; icon: string; label: Record<Lang, string> }[] = [
+  { id: 'home', icon: '\U0001f3e0', label: { en: 'Home', hi: 'होम' } },
+  { id: 'roadmap', icon: '\U0001f5fa\ufe0f', label: { en: 'Path Builder', hi: 'पथ बिल्डर' } },
+  { id: 'civic_twin', icon: '\U0001f464', label: { en: 'Civic Twin', hi: 'सिविक ट्विन' } },
+  { id: 'agent', icon: '\U0001f916', label: { en: 'Hermes Agent', hi: 'हर्मीज एजेंट' } },
+  { id: 'admin', icon: '\u2699\ufe0f', label: { en: 'Admin', hi: 'एडमिन' } },
+];
 
 export default function App() {
   const [token] = useState<string>(localStorage.getItem('civic_token') || '');
   const [authState, setAuthState] = useState<AuthState>(token ? 'app' : 'landing');
-  const [tab, setTab] = useState<Tab>('me');
+  const [tab, setTab] = useState<Tab>('home');
   const [lg, setLg] = useState<Lang>(lang());
   const t = STR[lg];
 
@@ -28,117 +36,167 @@ export default function App() {
     return <LoginPanel onLogin={handleLogin} />;
   }
 
-  // App is authenticated — show main UI
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--paper-2)' }}>
-      {/* Tricolor top bar */}
-      <div className="tricolor-bar" style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100 }} />
-
-      {/* Header Navigation */}
-      <header style={{
-        background: 'rgba(255,255,255,0.95)',
-        backdropFilter: 'blur(12px)',
-        borderBottom: '1px solid var(--line)',
-        padding: '16px 24px',
-        position: 'sticky',
-        top: 4,
-        zIndex: 99,
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--indigo)', margin: 0 }}>
-            🗺️ {t.appTitle}
-          </h1>
-
-          {/* Navigation Tabs */}
-          <nav style={{ display: 'flex', gap: 4, marginLeft: 16, borderTop: '1px solid var(--line)', paddingLeft: 16 }}>
-            {([['me', t.myDashboard], ['roadmap', t.roadmap], ['agent', t.agent], ['admin', t.admin]] as [Tab, string][]).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setTab(key)}
-                style={{
-                  padding: '8px 12px',
-                  borderRadius: '8px 8px 0 0',
-                  border: 'none',
-                  borderBottom: tab === key ? '2px solid var(--saffron)' : '2px solid transparent',
-                  background: tab === key ? 'rgba(249,115,22,0.1)' : 'transparent',
-                  color: tab === key ? 'var(--saffron)' : 'var(--ink-2)',
-                  fontWeight: tab === key ? 600 : 500,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  fontSize: 14,
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </nav>
+    <div className="cv-app-layout">
+      <aside className="cv-sidebar">
+        <div className="cv-sidebar-header">
+          <div className="cv-logo">
+            <span className="cv-logo-icon">{'\U0001f5fa\ufe0f'}</span>
+            <span className="cv-logo-text">{t.appTitle}</span>
+          </div>
+          <p className="cv-tagline">{t.appSubtitle}</p>
         </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* Language Switcher */}
-          <select aria-label="language" value={lg} onChange={(e) => { setLang(e.target.value as Lang); setLg(e.target.value as Lang); }}
-            style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--line)', fontSize: 13 }}>
-            <option value="en">English</option>
-            <option value="hi">हिंदी</option>
-          </select>
-
+        <nav className="cv-nav" role="navigation" aria-label="Main navigation">
+          {SIDEBAR_ITEMS.map(item => (
+            <button
+              key={item.id}
+              onClick={() => setTab(item.id)}
+              className={`cv-nav-item ${tab === item.id ? 'cv-nav-item-active' : ''}`}
+              aria-current={tab === item.id ? 'page' : undefined}
+            >
+              <span className="cv-nav-icon">{item.icon}</span>
+              <span className="cv-nav-label">{item.label[lg]}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="cv-sidebar-footer">
+          <p className="cv-slogan">{t.tagline}</p>
+          <div className="cv-lang-switch">
+            <select
+              value={lg}
+              onChange={(e) => { setLang(e.target.value as Lang); setLg(e.target.value as Lang); }}
+              aria-label="Select language"
+              className="cv-select"
+            >
+              <option value="en">English</option>
+              <option value="hi">हिन्दी</option>
+            </select>
+          </div>
           <button
-            className="cv-btn cv-btn-ghost"
-            style={{ padding: '6px 12px', fontSize: 12 }}
-            onClick={() => {
-              if (confirm('Export all your data?')) {
-                api.dashboard().then(data => {
-                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `civic-data-${new Date().toISOString().split('T')[0]}.json`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }).catch(() => alert('Export failed'));
-              }
-            }}
+            onClick={() => { localStorage.removeItem('civic_token'); setAuthState('landing'); }}
+            className="cv-btn cv-btn-ghost cv-btn-sm"
+            style={{ width: '100%' }}
           >
-            📥 Export
-          </button>
-
-          <button className="cv-btn cv-btn-ghost" onClick={() => { localStorage.removeItem('civic_token'); setAuthState('landing'); }}>
-            {t.logout}
+            {'\U0001f6aa'} {t.logout}
           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* Main Content */}
-      <main id="main-content" style={{ maxWidth: 1200, margin: '0 auto', padding: '24px' }}>
-        {tab === 'me' && <Dashboard />}
-        {tab === 'roadmap' && <Roadmap slug="udyam-register" />}
-        {tab === 'agent' && <AgentPanel />}
-        {tab === 'admin' && <Admin />}
+      <main className="cv-main">
+        <header className="cv-header">
+          <div className="cv-search-bar">
+            <span className="cv-search-icon">{'\U0001f50d'}</span>
+            <input
+              type="text"
+              placeholder={t.appSubtitle}
+              className="cv-search-input"
+              aria-label={t.appSubtitle}
+            />
+          </div>
+          <div className="cv-user-pill">
+            <span className="cv-user-avatar">{'\U0001f464'}</span>
+            <span className="cv-user-name">{t.civicTwin || 'Civic Twin'}</span>
+          </div>
+        </header>
+        <div className="cv-content">
+          {tab === 'home' && <HomeView />}
+          {tab === 'roadmap' && <Roadmap slug="udyam-register" />}
+          {tab === 'civic_twin' && <Dashboard />}
+          {tab === 'agent' && <AgentPanel />}
+          {tab === 'admin' && <Admin />}
+        </div>
       </main>
 
-      {/* Footer */}
-      <footer style={{
-        background: 'var(--paper)',
-        borderTop: '1px solid var(--line)',
-        padding: '24px',
-        marginTop: 48,
-      }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', textAlign: 'center' }}>
-          <div className="tricolor" style={{ width: 80, margin: '0 auto 16px' }} />
-          <p style={{ color: 'var(--ink-3)', fontSize: 13 }}>
-            An initiative supporting Digital India. DPDP Act compliant.
-          </p>
-          <p style={{ color: 'var(--ink-4)', fontSize: 11, marginTop: 8 }}>
-            Informational purposes only. Verify with official government sources.
-          </p>
-        </div>
+      <aside className="cv-context-panel">
+        {tab === 'roadmap' && <ContextualRoadmap />}
+        {tab === 'civic_twin' && <ContextualDashboard />}
+        {tab === 'home' && <ContextualHome />}
+        {tab !== 'roadmap' && tab !== 'civic_twin' && tab !== 'home' && (
+          <div className="cv-empty-panel">
+            <p>{t.rightPanelHint || 'Select a path to see context'}</p>
+          </div>
+        )}
+      </aside>
+
+      <footer className="cv-footer">
+        <div className="cv-tricolor-line" />
+        <p className="cv-footer-text">{t.footer}</p>
+        <p className="cv-disclaimer">{t.disclaimer}</p>
       </footer>
+    </div>
+  );
+}
+
+function ContextualRoadmap() {
+  const t = STR[lang()];
+  return (
+    <div className="cv-context-section">
+      <h3>{'\U0001f50d'} {t.sourcesChecked || 'Sources Checked'}</h3>
+      <div className="cv-source-list">
+        {[
+          { name: 'National Government Services Portal', verified: true },
+          { name: 'Municipal Corporation portal', verified: true },
+          { name: 'DigiLocker', verified: true },
+        ].map((src, i) => (
+          <div key={i} className={`cv-source-item ${src.verified ? 'cv-verified' : ''}`}>
+            <span className="cv-source-dot" />
+            <span className="cv-source-name">{src.name}</span>
+            {src.verified && <span className="cv-badge cv-badge-success">Verified</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ContextualDashboard() {
+  const t = STR[lang()];
+  return (
+    <div className="cv-context-section">
+      <h3>{'\U0001f4c4'} {t.yourDocuments || 'Your Documents'}</h3>
+      <div className="cv-doc-list">
+        <div className="cv-doc-item cv-doc-verified">
+          <span className="cv-doc-status">{'\u2705'}</span>
+          <span className="cv-doc-title">{t.have || 'What you hold'}</span>
+          <span className="cv-badge cv-badge-success">Verified</span>
+        </div>
+        <div className="cv-doc-item" style={{ borderStyle: 'dashed' }}>
+          <span className="cv-doc-icon">{'\u2795'}</span>
+          <span className="cv-doc-name">{t.addDoc || '+ Add Document'}</span>
+        </div>
+      </div>
+      <h3 style={{ marginTop: 24 }}>{'\U0001f3af'} {t.next || 'Easiest Next Win'}</h3>
+      <div className="cv-win-card">
+        <p className="cv-win-text">{t.welcomeBack || 'Welcome Back!'}</p>
+        <span className="cv-badge cv-badge-info">Save 2\u20133 days</span>
+      </div>
+      <h3 style={{ marginTop: 24 }}>{'\U0001f680'} {t.whatUnlocks || 'What This Unlocks'}</h3>
+      <ul className="cv-unlock-list">
+        <li><strong>{t.rnBuildPath || 'Build Path'}</strong> \u2014 Get verified step-by-step roadmap</li>
+        <li><strong>{t.dlTitle || 'Connect DigiLocker'}</strong> \u2014 Import your verified documents</li>
+      </ul>
+    </div>
+  );
+}
+
+function ContextualHome() {
+  const t = STR[lang()];
+  return (
+    <div className="cv-context-section">
+      <h3>{'\u2139\ufe0f'} {t.aboutCivic || 'About this platform'}</h3>
+      <p className="cv-about-text">{t.appDesc || 'A civic task navigator...'}</p>
+      <div className="cv-trust-badges">
+        {[
+          { icon: '\U0001f512', text: 'DPDP Act Compliant' },
+          { icon: '\U0001f1ee\U0001f1f3', text: 'Digital India' },
+          { icon: '\u267f', text: 'WCAG 2.1 AA' },
+        ].map((b, i) => (
+          <div key={i} className="cv-trust-badge">
+            <span>{b.icon}</span>
+            <span>{b.text}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
