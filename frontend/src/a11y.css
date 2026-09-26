@@ -1,0 +1,19 @@
+/* WCAG basics: visible focus, decent targets, reduced-motion respect. */
+:focus-visible {
+  outline: 3px solid #1a73e8;
+  outline-offset: 2px;
+}
+button, input, textarea, select, a {
+  min-height: 36px;
+}
+button {
+  cursor: pointer;
+  padding: 8px 14px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+}

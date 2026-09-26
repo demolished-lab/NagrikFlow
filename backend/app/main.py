@@ -32,7 +32,9 @@ from . import worker as workermod  # noqa: E402
 from . import watch as watchmod  # noqa: E402
 from . import security as secmod  # noqa: E402
 from . import notify as notifmod  # noqa: E402
-from .models import Consent, LinkCode, OtpCode, Progress, TaskMap, User, VaultItem
+from . import jobs as jobsmod  # noqa: E402
+from fastapi import BackgroundTasks as _BT  # noqa: E402
+from .models import Consent, Job, LinkCode, OtpCode, Progress, TaskMap, User, VaultItem
 
 ADMIN_EMAILS = {e.strip().lower() for e in
                 os.environ.get("ADMIN_EMAILS", "demo@civic.test").split(",") if e.strip()}
@@ -76,15 +78,8 @@ def _valid_email(e: str) -> bool:
 
 
 def _init_db():
-    SQLModel.metadata.create_all(engine)
-    seed = Path(__file__).resolve().parent.parent / "data" / "udyam_seed.json"
-    with Session(engine) as s:
-        if not s.exec(select(TaskMap).where(TaskMap.slug == "udyam-register")).first():
-            d = json.loads(seed.read_text())
-            s.add(TaskMap(slug=d["slug"], title=d["title"], city=d["city"],
-                          graph_json=json.dumps({"nodes": d["nodes"], "edges": d["edges"]}),
-                          source_urls=json.dumps(d["source_urls"])))
-            s.commit()
+    from . import migrate as migratemod
+    migratemod.migrate(engine)
 
 
 _init_db()
@@ -410,3 +405,44 @@ class RecheckIn(BaseModel):
 def admin_recheck(body: RecheckIn, admin: User = Depends(require_admin)):
     """Night-watchman run: None (all maps) or one slug. Slow: fetches sources."""
     return watchmod.recheck(engine, body.slug or None)
+
+
+@app.post("/admin/jobs/build")
+def job_build(body: BuildIn, bg: _BT, admin: User = Depends(require_admin)):
+    """Enqueue build-map; poll GET /admin/jobs/{id}. Returns immediately."""
+    if not body.urls or len(body.urls) > 5:
+        raise HTTPException(400, "1-5 urls required")
+    with Session(engine) as s:
+        j = Job(kind="build", created_by=admin.id,
+                payload=json.dumps({"task": body.task, "slug": body.slug,
+                                    "urls": body.urls}))
+        s.add(j)
+        s.commit()
+        s.refresh(j)
+        jid = j.id
+    bg.add_task(jobsmod.run_build, engine, jid)
+    return {"job_id": jid, "status": "queued"}
+
+
+@app.post("/admin/jobs/recheck")
+def job_recheck(body: RecheckIn, bg: _BT, admin: User = Depends(require_admin)):
+    with Session(engine) as s:
+        j = Job(kind="recheck", created_by=admin.id,
+                payload=json.dumps({"slug": body.slug}))
+        s.add(j)
+        s.commit()
+        s.refresh(j)
+        jid = j.id
+    bg.add_task(jobsmod.run_recheck, engine, jid)
+    return {"job_id": jid, "status": "queued"}
+
+
+@app.get("/admin/jobs/{job_id}")
+def job_status(job_id: int, admin: User = Depends(require_admin)):
+    from .models import Job as JobModel
+    with Session(engine) as s:
+        j = s.get(JobModel, job_id)
+        if not j:
+            raise HTTPException(404, "unknown job")
+        return {"job_id": j.id, "kind": j.kind, "status": j.status,
+                "result": json.loads(j.result), "finished": j.finished_at}

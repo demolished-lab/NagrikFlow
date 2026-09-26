@@ -27,14 +27,13 @@ Ordered by unblock-value. Checked items are done; unchecked need you or a key.
 - [ ] **page-agent "Guide me" overlay** — npm install in frontend, 10-line embed
   for in-gov-site guidance. Biggest demo wow-factor, still unwired.
 - [ ] **Hermes worker rebuild** — source absent; only `alerts.py` + webhook exist.
-- [ ] **Background jobs** — `/admin/build-map` and `/admin/recheck` run inline
-  (minutes, blocks HTTP). Move to Redis/Celery or FastAPI BackgroundTasks + polling.
+- [x] **Background jobs** — queued build/recheck + polling UI (single-process; Redis later).
 - [ ] **Postgres migration** — SQLite is dev-grade. SQLModel needs only a
   `DATABASE_URL` swap (Neon/Supabase free tier).
 - [ ] **DigiLocker sandbox end-to-end** — run the consent flow against
   `sandbox.api-setu.in` once Requester creds exist (mock passes today).
 - [ ] **Parallel-branch rendering** — DAG supports it; Roadmap UI lays out top-down only.
-- [ ] **Hindi/i18n + WCAG pass** — civic UI should get both before judging.
+- [x] **Hindi toggle (App + Dashboard) + WCAG basics** — Roadmap/Admin English-only for now.
 - [ ] **Test suite + CI** — sim scripts are manual; convert to pytest + GitHub Actions.
 - [ ] **MiroFish prediction lane (Phase-4)** — AGPL-3.0, heavy infra; pattern-only for now.
 

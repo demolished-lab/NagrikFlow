@@ -87,3 +87,15 @@ class LinkCode(SQLModel, table=True):
     code: str = Field(unique=True, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     used_at: Optional[datetime] = None
+
+
+class Job(SQLModel, table=True):
+    """Background job: build-map / recheck run async, polled by frontend."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = ""  # build | recheck
+    status: str = "queued"  # queued | running | done | failed
+    payload: str = "{}"  # input params
+    result: str = "{}"  # output summary
+    created_by: int = 0
+    created_at: datetime = Field(default_factory=utcnow)
+    finished_at: Optional[datetime] = None

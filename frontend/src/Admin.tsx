@@ -27,15 +27,27 @@ export default function Admin() {
 
   const [checking, setChecking] = useState('');
 
+  const pollJob = async (id: number) => {
+    for (let i = 0; i < 100; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const j = await fetch(`/api/admin/jobs/${id}`, { headers: H(tok) }).then((x) => x.json());
+      if (j.status === 'done' || j.status === 'failed') return j;
+    }
+    return { status: 'timeout' };
+  };
+
   const recheck = async (slug: string) => {
     setChecking(slug || 'all');
     setErr('');
     try {
-      const r = await fetch('/api/admin/recheck', {
+      const { job_id } = await fetch('/api/admin/jobs/recheck', {
         method: 'POST', headers: H(tok), body: JSON.stringify({ slug }),
       }).then((x) => x.json());
-      const changed = (Array.isArray(r) ? r : []).filter((m: any) => m.changed);
-      alert(changed.length ? `CHANGED: ${changed.map((m: any) => m.slug).join(', ')} — verification revoked.` : 'No changes. All maps still verified.');
+      const j = await pollJob(job_id);
+      const changed = ((j.result || {}).maps || []).filter((m: any) => m.changed);
+      alert(j.status === 'failed' ? `Job failed: ${JSON.stringify(j.result)}`
+        : changed.length ? `CHANGED: ${changed.map((m: any) => m.slug).join(', ')} — verification revoked.`
+        : 'No changes. All maps still verified.');
       load();
     } catch (e: any) { setErr(String(e.message || e)); }
     setChecking('');
@@ -45,13 +57,17 @@ export default function Admin() {
     setBuilding(true);
     setErr('');
     try {
-      const r = await fetch('/api/admin/build-map', {
+      const { job_id } = await fetch('/api/admin/jobs/build', {
         method: 'POST', headers: H(tok),
         body: JSON.stringify({ ...form, urls: form.urls.split('\n').map((s) => s.trim()).filter(Boolean) }),
+      }).then(async (r) => {
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || 'build failed');
+        return j;
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.detail || 'build failed');
-      alert(`Built ${j.slug}: ${j.steps} steps (UNVERIFIED — review then stamp).`);
+      const j = await pollJob(job_id);
+      if (j.status === 'failed') throw new Error(JSON.stringify(j.result));
+      alert(`Built ${j.result.slug}: ${j.result.steps} steps (UNVERIFIED — review then stamp).`);
       load();
     } catch (e: any) { setErr(String(e.message || e)); }
     setBuilding(false);
