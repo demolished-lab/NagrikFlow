@@ -14,6 +14,9 @@ export const STR: Record<Lang, Record<string, string>> = {
     dlBtn: 'Get consent link', dlOpen: 'Open official consent page',
     tgTitle: 'Telegram alerts', tgBody: 'One bot for everyone; your chat links only to your account via a one-time code.',
     tgBtn: 'Get link code', tgSend: 'Send to our bot (expires in 15 min, single use).',
+    admTitle: 'Maps under review', admBuild: 'Build new map (scrape cascade)',
+    admVerify: 'Stamp verified', admUnverify: 'Unverify',
+    admRecheck: 'Recheck source', admRecheckAll: 'Recheck all sources',
   },
   hi: {
     appTitle: 'सिविक पथ नेविगेटर',
@@ -27,6 +30,8 @@ export const STR: Record<Lang, Record<string, string>> = {
     dlBtn: 'सहमति लिंक लें', dlOpen: 'आधिकारिक सहमति पेज खोलें',
     tgTitle: 'टेलीग्राम अलर्ट', tgBody: 'सबके लिए एक बॉट; आपकी चैट सिर्फ आपके खाते से जुड़ती है।',
     tgBtn: 'लिंक कोड लें', tgSend: 'हमारे बॉट को भेजें (15 मिनट में समाप्त, एक बार)।',
+    admTitle: 'समीक्षाधीन नक्शे', admBuild: 'नया नक्शा बनाएं', admVerify: 'सत्यापित मुहर',
+    admUnverify: 'असत्यापित करें', admRecheck: 'स्रोत जांचें', admRecheckAll: 'सभी स्रोत जांचें',
   },
 };
 

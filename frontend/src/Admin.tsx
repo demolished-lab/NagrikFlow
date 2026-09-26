@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { STR, lang } from './i18n';
 
 const H = (t: string | null): Record<string, string> => ({
   'Content-Type': 'application/json',
@@ -6,6 +7,7 @@ const H = (t: string | null): Record<string, string> => ({
 });
 
 export default function Admin() {
+  const t = STR[lang()];
   const tok = localStorage.getItem('civic_token');
   const [maps, setMaps] = useState<any[]>([]);
   const [err, setErr] = useState('');
@@ -77,9 +79,9 @@ export default function Admin() {
     <div style={{ display: 'grid', gap: 12, maxWidth: 760 }}>
       {err && <p style={{ color: 'red' }}>{err}</p>}
       <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-        <h3>🗂️ Maps under review</h3>
+        <h3>🗂️ {t.admTitle}</h3>
         <button onClick={() => recheck('')} disabled={!!checking}>
-          {checking === 'all' ? 'Checking all…' : '🌙 Recheck all sources'}
+          {checking === 'all' ? 'Checking all…' : `🌙 ${t.admRecheckAll}`}
         </button>
         {maps.map((m) => (
           <div key={m.slug} style={{ borderBottom: '1px solid #eee', padding: '6px 0' }}>
@@ -88,16 +90,16 @@ export default function Admin() {
             <small>hash: {m.hash || '—'} · checked: {m.checked || 'never'}</small><br />
             <small>sources: {(m.sources || []).map((s: any) => typeof s === 'string' ? s : s.url).join(', ')}</small><br />
             <button onClick={() => verify(m.slug, !m.verified)}>
-              {m.verified ? 'Unverify' : 'Stamp verified'}
+              {m.verified ? t.admUnverify : t.admVerify}
             </button>{' '}
             <button onClick={() => recheck(m.slug)} disabled={!!checking}>
-              {checking === m.slug ? 'Checking…' : 'Recheck source'}
+              {checking === m.slug ? 'Checking…' : t.admRecheck}
             </button>
           </div>
         ))}
       </div>
       <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-        <h3>🏗️ Build new map (scrape cascade)</h3>
+        <h3>🏗️ {t.admBuild}</h3>
         <input placeholder="task, e.g. Apply for birth certificate" value={form.task}
           onChange={(e) => setForm({ ...form, task: e.target.value })}
           style={{ display: 'block', width: '100%', margin: '6px 0', padding: 8 }} />

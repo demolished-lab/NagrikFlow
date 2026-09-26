@@ -6,6 +6,21 @@ import { api } from './api';
 
 type GNode = { id: string; type: string; title: string; detail?: string; url?: string; fee?: string };
 
+const DEPTH_COLORS = ['#888', '#36c', '#7a3cc0', '#c07418', '#c02c4d', '#0d7377'];
+
+function depths(nodes: GNode[], edges: string[][]): Record<string, number> {
+  // Longest-path depths via relaxation: parallel branches share color bands.
+  const ids = new Set(nodes.map((n) => n.id));
+  const d: Record<string, number> = {};
+  nodes.forEach((n) => { d[n.id] = 0; });
+  for (let i = 0; i < nodes.length; i++) {
+    edges.forEach(([a, b]) => {
+      if (ids.has(a) && ids.has(b)) d[b] = Math.max(d[b], d[a] + 1);
+    });
+  }
+  return d;
+}
+
 function layout(nodes: GNode[], edges: string[][]): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: 70 });
@@ -13,16 +28,18 @@ function layout(nodes: GNode[], edges: string[][]): { nodes: Node[]; edges: Edge
   nodes.forEach((n) => g.setNode(n.id, { width: 220, height: 90 }));
   edges.forEach(([a, b]) => g.setEdge(a, b));
   dagre.layout(g);
+  const dep = depths(nodes, edges);
   return {
     nodes: nodes.map((n) => {
       const p = g.node(n.id);
       const done = localStorage.getItem(`done-${n.id}`) === '1';
+      const band = DEPTH_COLORS[dep[n.id] % DEPTH_COLORS.length];
       return {
         id: n.id,
         position: { x: p.x - 110, y: p.y - 45 },
         data: { label: `${done ? '✅ ' : ''}${n.title}${n.fee ? ` (${n.fee})` : ''}` },
         style: {
-          border: '2px solid ' + (n.type === 'prereq' ? '#888' : done ? '#2a2' : '#36c'),
+          border: '2px solid ' + (done ? '#2a2' : band),
           borderRadius: 10, padding: 8, width: 220, background: done ? '#eaffea' : '#fff',
         },
       };
