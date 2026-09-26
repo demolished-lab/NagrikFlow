@@ -1,0 +1,19 @@
+# secrets & local state
+backend/.env
+*.db
+*.db-journal
+
+# python
+__pycache__/
+*.pyc
+.venv*/
+*.egg-info/
+
+# node
+frontend/node_modules/
+frontend/dist/
+
+# logs & misc
+*.log
+*.err
+.DS_Store
