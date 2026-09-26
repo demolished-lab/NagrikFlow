@@ -99,3 +99,12 @@ class Job(SQLModel, table=True):
     created_by: int = 0
     created_at: datetime = Field(default_factory=utcnow)
     finished_at: Optional[datetime] = None
+
+
+class OAuthState(SQLModel, table=True):
+    """Server-side PKCE store: state -> verifier, bound to user, single-use."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    state: str = Field(unique=True, index=True)
+    verifier: str = ""
+    created_at: datetime = Field(default_factory=utcnow)

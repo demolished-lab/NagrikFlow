@@ -65,7 +65,7 @@ function ConnectDigiLocker() {
       <p><small>{t.dlBody}</small></p>
       <button onClick={async () => {
         const r = await api.dlConnect();
-        sessionStorage.setItem('pkce', r.pkce_verifier);
+        sessionStorage.setItem('oauth_state', r.state);
         setUrl(r.authorize_url);
       }}>{t.dlBtn}</button>
       {url && <p><a href={url} target="_blank" rel="noreferrer">{t.dlOpen} ↗</a></p>}

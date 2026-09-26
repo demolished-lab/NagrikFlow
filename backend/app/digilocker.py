@@ -83,7 +83,7 @@ def kind_from_doctype(doctype: str) -> str:
         return "pan"
     if "aadhaar" in d or "aadhar" in d or "adhar" in d:
         return "aadhaar"
-    if "driving" in d or "licence" in d or "license" in d:
+    if "driving" in d or "licence" in d or "license" in d or "drvlc" in d:
         return "dl"
     if "gst" in d:
         return "gstin"

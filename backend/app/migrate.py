@@ -64,7 +64,17 @@ def m003_security_jobs(engine):
     _ensure_columns(engine)
 
 
-MIGRATIONS = [m001_base, m002_seed_udyam, m003_security_jobs]
+def m004_oauth_state(engine):
+    """OAuthState table on already-migrated DBs (fresh DBs get it via m001)."""
+    SQLModel.metadata.create_all(engine)  # checkfirst: new tables only
+
+
+MIGRATIONS = [m001_base, m002_seed_udyam, m003_security_jobs, m004_oauth_state]
+
+
+def m004_oauth_state(engine):
+    """OAuthState table on already-migrated DBs (fresh DBs get it via m001)."""
+    SQLModel.metadata.create_all(engine)  # checkfirst: new tables only
 
 
 def migrate(engine):

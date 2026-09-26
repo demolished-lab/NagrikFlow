@@ -35,7 +35,7 @@ from . import notify as notifmod  # noqa: E402
 from . import jobs as jobsmod  # noqa: E402
 from . import discover as discovermod  # noqa: E402
 from fastapi import BackgroundTasks as _BT  # noqa: E402
-from .models import Consent, Job, LinkCode, OtpCode, Progress, TaskMap, User, VaultItem
+from .models import Consent, Job, LinkCode, OAuthState, OtpCode, Progress, TaskMap, User, VaultItem
 
 ADMIN_EMAILS = {e.strip().lower() for e in
                 os.environ.get("ADMIN_EMAILS", "demo@civic.test").split(",") if e.strip()}
@@ -194,22 +194,39 @@ def otp_verify(body: OtpVerify):
 
 @app.get("/auth/digilocker/connect")
 def dl_connect(user: User = Depends(current_user)):
-    """Step 1: returns the MeriPehchaan consent URL. State binds user_id."""
-    url, verifier = dg.authorize_url(state=f"{user.id}")
-    # NOTE: production must persist verifier server-side keyed by state (Redis/DB).
-    return {"authorize_url": url, "pkce_verifier": verifier,
-            "note": "save verifier; POST it with code to /auth/digilocker/callback"}
+    """Step 1: persist PKCE verifier server-side, return consent URL + state."""
+    import secrets as _secrets
+    state = f"{user.id}.{_secrets.token_hex(8)}"
+    url, verifier = dg.authorize_url(state=state)
+    with Session(engine) as s:
+        s.add(OAuthState(user_id=user.id, state=state, verifier=verifier))
+        s.commit()
+    return {"authorize_url": url, "state": state}
 
 
 class DLCallback(BaseModel):
     code: str
-    verifier: str
+    state: str = ""
+    verifier: str = ""  # legacy clients holding their own verifier
 
 
 @app.post("/auth/digilocker/callback")
 def dl_callback(body: DLCallback, user: User = Depends(current_user)):
-    """Step 2: exchange code, pull issued docs, store consent receipt + vault facts."""
-    tokens = dg.exchange_code(body.code, body.verifier)
+    """Step 2: resolve user-bound verifier, single-use, then exchange + import."""
+    verifier = body.verifier
+    with Session(engine) as s:
+        if body.state:
+            row = s.exec(select(OAuthState).where(
+                OAuthState.state == body.state,
+                OAuthState.user_id == user.id)).first()
+            if not row:
+                raise HTTPException(400, "unknown or foreign oauth state")
+            verifier = row.verifier
+            s.delete(row)
+            s.commit()
+        if not verifier:
+            raise HTTPException(400, "verifier required")
+    tokens = dg.exchange_code(body.code, verifier)
     docs = dg.fetch_issued_docs(tokens["access_token"])
     kinds = set()
     with Session(engine) as s:
@@ -238,7 +255,10 @@ def dashboard(user: User = Depends(current_user)):
         per_map: dict = {}
         for p in progs:
             per_map[p.map_slug] = per_map.get(p.map_slug, 0) + 1
-    board = elig.personalize({i.kind for i in items}, per_map)
+    board = elig.personalize({i.kind for i in items}, per_map, [
+        {"kind": i.kind, "label": i.label,
+         "expires_at": i.expires_at.isoformat() if i.expires_at else "",
+         "meta": i.meta} for i in items])
     board["user"] = {"name": user.name, "city": user.city, "state": user.state}
     return board
 
