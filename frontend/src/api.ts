@@ -18,7 +18,12 @@ export const api = {
   login: (b: object) => req('/auth/login', { method: 'POST', body: JSON.stringify(b) }),
   dashboard: () => req('/me/dashboard'),
   brief: () => req('/me/brief'),
-  map: (slug: string) => req(`/maps/${slug}`),
+  map: (slug: string, filters: Record<string, string> = {}) => {
+    const query = new URLSearchParams(
+      Object.entries(filters).filter(([, value]) => Boolean(value)),
+    ).toString();
+    return req(`/maps/${slug}${query ? `?${query}` : ''}`);
+  },
   done: (map_slug: string, step_id: string) =>
     req('/me/progress', { method: 'POST', body: JSON.stringify({ map_slug, step_id }) }),
   progress: (map_slug: string) => req(`/me/progress/${encodeURIComponent(map_slug)}`),

@@ -1,191 +1,105 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import ReactFlow, { Background, Controls, Handle, MiniMap, Position, type Edge, type Node } from 'reactflow';
+import 'reactflow/dist/style.css';
 import { api } from './api';
 import { STR, lang } from './i18n';
 
 type GNode = { id: string; type: string; title: string; detail?: string; url?: string; fee?: string };
 type Status = 'ready' | 'action' | 'unlocked' | 'verified';
+type Filters = { node_type: string; status: string; q: string };
+type MapPayload = { graph: { nodes: GNode[]; edges: string[][] }; filters?: { types?: string[]; statuses?: string[]; total?: number }; sources?: string[]; title?: string; city?: string };
 
 const STATUS_CONFIG: Record<Status, { color: string; bg: string; badge: string; icon: string }> = {
-  ready: { color: '#1e3a8a', bg: '#eff6ff', badge: 'Ready', icon: '\u{1F4DB}' },
-  action: { color: '#f97316', bg: '#fff7ed', badge: 'Needs Action', icon: '\u{26A1}' },
-  unlocked: { color: '#16a34a', bg: '#f0fdf4', badge: 'Unlocked', icon: '\u{1F513}' },
-  verified: { color: '#16a34a', bg: '#dcfce7', badge: 'Verified', icon: '\u2705' },
+  ready: { color: '#1e3a8a', bg: '#eff6ff', badge: 'Ready', icon: '◌' },
+  action: { color: '#936300', bg: '#fff7d6', badge: 'Needs Action', icon: '!' },
+  unlocked: { color: '#087b5b', bg: '#e0f8ed', badge: 'Unlocked', icon: '↗' },
+  verified: { color: '#087b5b', bg: '#d9f7e9', badge: 'Verified', icon: '✓' },
 };
+
+function CivicNode({ data }: { data: { title: string; status: Status; index: number; onSelect: () => void } }) {
+  const cfg = STATUS_CONFIG[data.status];
+  return <div className={`cv-flow-node cv-flow-node-${data.status}`} onClick={data.onSelect} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && data.onSelect()}>
+    <Handle type="target" position={Position.Left} />
+    <div className="cv-flow-node-top"><span className="cv-step-number">{data.index + 1}</span><span className="cv-flow-type">{cfg.badge}</span><span className="cv-flow-icon">{cfg.icon}</span></div>
+    <strong>{data.title}</strong>
+    <span className="cv-flow-status" style={{ color: cfg.color, background: cfg.bg }}>{cfg.badge}</span>
+    <Handle type="source" position={Position.Right} />
+  </div>;
+}
+
+const nodeTypes = { civic: CivicNode };
 
 export default function Roadmap({ slug }: { slug: string }) {
   const t = STR[lang()];
-  const [nodes, setNodes] = useState<GNode[]>([]);
-  const [edges, setEdges] = useState<string[][]>([]);
+  const [payload, setPayload] = useState<MapPayload | null>(null);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
-  const [sel, setSel] = useState<GNode | null>(null);
+  const [selected, setSelected] = useState<GNode | null>(null);
+  const [filters, setFilters] = useState<Filters>({ node_type: '', status: '', q: '' });
+  const [view, setView] = useState<'map' | 'list'>('map');
   const [err, setErr] = useState('');
-  const [guide, setGuide] = useState('');
-  const [gq, setGq] = useState('');
-  const [gBusy, setGBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    Promise.all([api.map(slug), api.progress(slug)])
-      .then(([m, p]) => {
-        setNodes(m.graph.nodes);
-        setEdges(m.graph.edges);
-        setCompleted(new Set(p.steps || []));
-      })
-      .catch((e) => setErr(String(e.message || e)));
-  }, [slug]);
+  const loadMap = useCallback(async () => {
+    setLoading(true);
+    setErr('');
+    try {
+      const [map, progress] = await Promise.all([api.map(slug, filters), api.progress(slug)]);
+      setPayload(map);
+      setCompleted(new Set(progress.steps || []));
+    } catch (e: any) {
+      setErr(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }, [slug, filters]);
 
-  const getStatus = (node: GNode): Status => {
+  useEffect(() => { loadMap(); }, [loadMap]);
+
+  const getStatus = useCallback((node: GNode): Status => {
     if (completed.has(node.id)) return 'verified';
     if (node.type === 'action') return 'action';
     if (node.type === 'unlocked') return 'unlocked';
     return 'ready';
-  };
+  }, [completed]);
 
-  const markDone = async (nodeId: string) => {
-    await api.done(slug, nodeId);
-    setCompleted(prev => new Set([...prev, nodeId]));
-    if (sel?.id === nodeId) {
-      setSel(prev => prev ? { ...prev, type: 'verified' } : null);
-    }
-  };
-
-  const askGuide = async () => {
-    if (!sel) return;
-    const key = localStorage.getItem('guide_key') || '';
-    if (!key) { setGuide(t.rmKeyPh || 'Save your own LLM key (Guide settings) for AI answers.'); return; }
-    setGBusy(true);
+  const markDone = async (node: GNode) => {
     try {
-      const { PageAgent } = await import('page-agent');
-      const agent: any = new (PageAgent as any)({
-        model: 'nemotron-3-ultra-free',
-        baseURL: 'https://router.bynara.id/v1',
-        apiKey: key,
-        language: 'en-US',
-      });
-      const ans = await agent.execute(
-        `Civic procedure step: "${sel.title}". Details: ${sel.detail || ''}. User asks: ${gq || 'Explain this step in plain simple words and list exactly what to carry.'}`
-      );
-      setGuide(String(ans).slice(0, 1200));
+      await api.done(slug, node.id);
+      setCompleted((prev) => new Set([...prev, node.id]));
+      setSelected((prev) => prev?.id === node.id ? node : prev);
     } catch (e: any) {
-      setGuide('Guide unavailable: ' + String(e.message || e));
+      setErr(String(e.message || e));
     }
-    setGBusy(false);
   };
 
-  if (err) return <p style={{ color: 'red' }}>{err}</p>;
-  if (nodes.length === 0) return <p>{t.loading || 'Loading...'}</p>;
+  const flowNodes = useMemo<Node[]>(() => {
+    if (!payload) return [];
+    return payload.graph.nodes.map((node, index) => ({
+      id: node.id,
+      type: 'civic',
+      position: { x: (index % 3) * 270, y: Math.floor(index / 3) * 170 },
+      data: { title: node.title, status: getStatus(node), index, onSelect: () => setSelected(node) },
+    }));
+  }, [payload, getStatus]);
 
-  return (
-    <div className="cv-path-view">
-      <div className="cv-path-input">
-        <div className="cv-path-input-inner">
-          <textarea
-            className="cv-path-textarea"
-            placeholder={t.pathInputPlaceholder || 'e.g., I want to get a new water connection...'}
-            rows={2}
-            defaultValue="I want to get a new water connection for my apartment"
-          />
-          <button className="cv-btn cv-btn-primary cv-btn-lg">
-            {'\u{1F50D}'} {t.buildPath || 'Build Verified Path'}
-          </button>
-        </div>
-      </div>
+  const flowEdges = useMemo<Edge[]>(() => (payload?.graph.edges || []).map(([source, target]) => ({ id: `${source}-${target}`, source, target, animated: false, style: { stroke: '#0871cf', strokeWidth: 2 } })), [payload]);
+  const updateFilter = (key: keyof Filters, value: string) => setFilters((prev) => ({ ...prev, [key]: value }));
+  const resetFilters = () => setFilters({ node_type: '', status: '', q: '' });
 
-      <div className="cv-path-timeline">
-        <div className="cv-timeline-header">
-          <h2>{t.pathTitle || 'Your Procedure Path'}</h2>
-          <div className="cv-path-meta">
-            <span className="cv-meta-item">{'\u{1F4C5}'} {new Date().toLocaleDateString()}</span>
-            <span className="cv-meta-item">{'\u{1F4CA}'} {completed.size}/{nodes.length} {t.stagesDone || 'steps complete'}</span>
-          </div>
-        </div>
+  if (loading && !payload) return <p aria-live="polite">{t.loading || 'Loading your verified path…'}</p>;
+  if (err && !payload) return <p role="alert" className="cv-api-error">{err}</p>;
+  if (!payload) return null;
 
-        <div className="cv-steps-container">
-          {nodes.slice(0, 7).map((node, idx) => {
-            const status = getStatus(node);
-            const cfg = STATUS_CONFIG[status];
-            const isSelected = sel?.id === node.id;
-            return (
-              <React.Fragment key={node.id}>
-                {idx > 0 && <div className="cv-arrow">\u2192</div>}
-                <button
-                  onClick={() => setSel(node)}
-                  className={`cv-step-card cv-step-${status} ${isSelected ? 'cv-step-selected' : ''}`}
-                  aria-pressed={isSelected}
-                >
-                  <div className="cv-step-header">
-                    <span className="cv-step-badge" style={{ background: cfg.bg, color: cfg.color }}>
-                      {cfg.icon} {cfg.badge}
-                    </span>
-                    <span className="cv-step-step">Step {idx + 1}</span>
-                  </div>
-                  <h3 className="cv-step-title">{node.title}</h3>
-                  {node.fee && <p className="cv-step-fee">{'\u{1F4B0}'} {node.fee}</p>}
-                  {node.url && (
-                    <a href={node.url} target="_blank" rel="noreferrer" className="cv-step-link">
-                      {t.source || 'Official Source'} \u2197
-                    </a>
-                  )}
-                  <details className="cv-step-details">
-                    <summary>{t.whyThisStep || 'Why this step?'}</summary>
-                    <p>{node.detail || t.noDetail || 'No additional details.'}</p>
-                  </details>
-                  {status !== 'verified' && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); markDone(node.id); }}
-                      className="cv-btn cv-btn-sm cv-btn-indigo"
-                    >
-                      {'\u2713'} {t.rmDone || 'Mark Done'}
-                    </button>
-                  )}
-                </button>
-              </React.Fragment>
-            );
-          })}
-        </div>
+  return <div className="cv-path-view cv-roadmap-view">
+    <section className="cv-path-input cv-roadmap-toolbar">
+      <div className="cv-roadmap-toolbar-head"><div><span className="cv-eyebrow">VERIFIED CIVIC MAP</span><h1>{payload.title || t.pathTitle || 'Your Procedure Path'}</h1><p>{payload.city ? `${payload.city} · ` : ''}{payload.filters?.total || payload.graph.nodes.length} steps from verified sources</p></div><div className="cv-view-toggle"><button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}>⌘ Map</button><button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>☷ List</button></div></div>
+      <div className="cv-filter-row"><label className="cv-filter-search">⌕<input value={filters.q} onChange={(e) => updateFilter('q', e.target.value)} placeholder="Search steps, documents or fees" /></label><select value={filters.node_type} onChange={(e) => updateFilter('node_type', e.target.value)} aria-label="Filter by step type"><option value="">All step types</option>{(payload.filters?.types || []).map((type) => <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>)}</select><select value={filters.status} onChange={(e) => updateFilter('status', e.target.value)} aria-label="Filter by status"><option value="">All statuses</option>{(payload.filters?.statuses || []).map((status) => <option key={status} value={status}>{STATUS_CONFIG[status as Status]?.badge || status}</option>)}</select><button className="cv-filter-reset" onClick={resetFilters}>Reset</button></div>
+      <div className="cv-filter-summary">{loading ? 'Refreshing map…' : `${payload.graph.nodes.length} visible steps`} {filters.q || filters.node_type || filters.status ? <span> · Filters are synced with the API</span> : null}</div>
+    </section>
 
-        <div className="cv-sources-section">
-          <h4>{'\u{1F50D}'} {t.sourcesChecked || 'Sources Checked'}</h4>
-          <div className="cv-source-chips">
-            {['National Govt Services', 'Municipal Corp', 'DigiLocker'].map((src, i) => (
-              <div key={i} className="cv-source-chip cv-verified">
-                <span>{'\u2713'}</span> {src}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+    {view === 'map' ? <section className="cv-interactive-map" aria-label="Interactive civic procedure map"><ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView minZoom={0.4} maxZoom={1.4}><MiniMap nodeColor={(node) => STATUS_CONFIG[(node.data?.status || 'ready') as Status]?.color || '#0871cf'} /><Controls /><Background color="#d9e6f2" gap={20} /></ReactFlow>{flowNodes.length === 0 && <div className="cv-map-empty">No steps match these filters. <button onClick={resetFilters}>Clear filters</button></div>}</section> : <section className="cv-path-timeline cv-filtered-list">{payload.graph.nodes.map((node, index) => { const status = getStatus(node); const cfg = STATUS_CONFIG[status]; return <article className="cv-step-card cv-filtered-step" key={node.id} onClick={() => setSelected(node)}><div className="cv-step-header"><span className="cv-step-badge" style={{ background: cfg.bg, color: cfg.color }}>{cfg.icon} {cfg.badge}</span><span className="cv-step-step">Step {index + 1}</span></div><h3 className="cv-step-title">{node.title}</h3><p>{node.detail || 'Verified dependency in your civic workflow.'}</p>{node.fee && <small>Fee: {node.fee}</small>}<div className="cv-filtered-step-actions">{node.url && <a href={node.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Official source ↗</a>}{status !== 'verified' && <button className="cv-btn cv-btn-sm cv-btn-indigo" onClick={(e) => { e.stopPropagation(); markDone(node); }}>✓ Mark Done</button>}</div></article>; })}</section>}
 
-      {sel && (
-        <div className="cv-detail-panel">
-          <button onClick={() => setSel(null)} className="cv-close-btn">{'\u00D7'}</button>
-          <h2>{sel.title}</h2>
-          <p>{sel.detail}</p>
-          {sel.fee && <p><b>{t.rmFee || 'Fee'}:</b> {sel.fee}</p>}
-          {sel.url && <a href={sel.url} target="_blank" rel="noreferrer">{t.rmOpen || 'Open official site'} \u2197</a>}
-          <hr className="cv-divider" />
-          <h3>{'\u{1F56D}\uFE0F'} {t.rmGuide || 'Guide Me'}</h3>
-          <textarea
-            placeholder={t.rmAsk || 'Ask about this step...'}
-            value={gq}
-            onChange={(e) => setGq(e.target.value)}
-            className="cv-textarea cv-small"
-          />
-          <button onClick={askGuide} disabled={gBusy} className="cv-btn cv-btn-primary">
-            {gBusy ? '...' : t.rmAskBtn || 'Ask Guide'}
-          </button>
-          {guide && <p className="cv-guide-response">{guide}</p>}
-          <details>
-            <summary>{t.rmKey || 'Guide Settings'}</summary>
-            <input
-              type="password"
-              placeholder={t.rmKeyPh || 'Paste LLM key...'}
-              defaultValue={localStorage.getItem('guide_key') || ''}
-              onBlur={(e) => localStorage.setItem('guide_key', e.target.value.trim())}
-              className="cv-input cv-small"
-            />
-          </details>
-        </div>
-      )}
-    </div>
-  );
+    <section className="cv-sources-section cv-map-sources"><h4>⌕ {t.sourcesChecked || 'Sources Checked'}</h4><div className="cv-source-chips">{(payload.sources || []).map((source) => <div key={source} className="cv-source-chip cv-verified"><span>✓</span> {new URL(source).hostname.replace(/^www\./, '')}</div>)}</div></section>
+    {selected && <aside className="cv-detail-panel cv-map-detail"><button onClick={() => setSelected(null)} className="cv-close-btn">×</button><span className={`cv-status cv-status-${getStatus(selected)}`}>{STATUS_CONFIG[getStatus(selected)].badge}</span><h2>{selected.title}</h2><p>{selected.detail || t.noDetail || 'No additional details available for this step.'}</p>{selected.fee && <p><b>{t.rmFee || 'Fee'}:</b> {selected.fee}</p>}{selected.url && <a href={selected.url} target="_blank" rel="noreferrer">{t.rmOpen || 'Open official site'} ↗</a>}{getStatus(selected) !== 'verified' && <button className="cv-btn cv-btn-indigo" onClick={() => markDone(selected)}>✓ {t.rmDone || 'Mark done'}</button>}</aside>}
+  </div>;
 }

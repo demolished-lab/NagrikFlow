@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -330,16 +330,52 @@ def brief(user: User = Depends(current_user)):
 
 
 @app.get("/maps/{slug}")
-def get_map(slug: str, user: User = Depends(current_user)):
+def get_map(
+    slug: str,
+    node_type: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=120),
+    user: User = Depends(current_user),
+):
     with Session(engine) as s:
         m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
         if not m:
             raise HTTPException(404, "unknown map")
         if not m.verified_at:
             raise HTTPException(404, "map is not currently verified")
-        return {"slug": m.slug, "title": m.title, "city": m.city,
-                "graph": json.loads(m.graph_json),
-                "sources": json.loads(m.source_urls), "verified": m.verified_at}
+        graph = json.loads(m.graph_json)
+        completed = {p.step_id for p in s.exec(select(Progress).where(
+            Progress.user_id == user.id, Progress.map_slug == slug)).all()}
+
+    def node_status(node: dict) -> str:
+        if node.get("id") in completed:
+            return "verified"
+        if node.get("type") == "action":
+            return "action"
+        if node.get("type") == "unlocked":
+            return "unlocked"
+        return "ready"
+
+    all_nodes = graph.get("nodes", [])
+    normalized_q = q.strip().lower() if q else ""
+    filtered_nodes = [node for node in all_nodes if
+                      (not node_type or node.get("type") == node_type) and
+                      (not status or node_status(node) == status) and
+                      (not normalized_q or normalized_q in " ".join([
+                          str(node.get("title", "")), str(node.get("detail", "")),
+                          str(node.get("fee", ""))]).lower())]
+    visible_ids = {node.get("id") for node in filtered_nodes}
+    filtered_edges = [edge for edge in graph.get("edges", [])
+                      if len(edge) >= 2 and edge[0] in visible_ids and edge[1] in visible_ids]
+    filter_options = {
+        "types": sorted({str(node.get("type")) for node in all_nodes if node.get("type")}),
+        "statuses": sorted({node_status(node) for node in all_nodes}),
+        "total": len(all_nodes),
+    }
+    return {"slug": m.slug, "title": m.title, "city": m.city,
+            "graph": {"nodes": filtered_nodes, "edges": filtered_edges},
+            "filters": filter_options, "sources": json.loads(m.source_urls),
+            "verified": m.verified_at}
 
 
 class DoneIn(BaseModel):
