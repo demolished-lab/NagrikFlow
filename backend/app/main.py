@@ -11,8 +11,6 @@ from pydantic import BaseModel
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from .models import Consent, LinkCode, Progress, TaskMap, User, VaultItem
-
 
 def _load_env():
     envf = Path(__file__).resolve().parent.parent / ".env"
@@ -32,6 +30,9 @@ from . import eligibility as elig  # noqa: E402
 from . import llm as llmmod  # noqa: E402
 from . import worker as workermod  # noqa: E402
 from . import watch as watchmod  # noqa: E402
+from . import security as secmod  # noqa: E402
+from . import notify as notifmod  # noqa: E402
+from .models import Consent, LinkCode, OtpCode, Progress, TaskMap, User, VaultItem
 
 ADMIN_EMAILS = {e.strip().lower() for e in
                 os.environ.get("ADMIN_EMAILS", "demo@civic.test").split(",") if e.strip()}
@@ -40,6 +41,7 @@ DB_URL = os.environ.get("DATABASE_URL", "sqlite:///./civic.db")
 engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(title="Civic Path Navigator")
+app.middleware("http")(secmod.rate_limit_middleware)
 
 
 def current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> User:
@@ -97,6 +99,8 @@ def health():
 def register(body: RegisterIn):
     if not _valid_email(body.email) or len(body.password) < 4:
         raise HTTPException(400, "valid email + password (4+ chars) required")
+    if not _valid_email(body.email) or len(body.password) < 4:
+        raise HTTPException(400, "valid email + password (4+ chars) required")
     with Session(engine) as s:
         if s.exec(select(User).where(User.email == body.email)).first():
             raise HTTPException(409, "email already registered")
@@ -111,10 +115,84 @@ def register(body: RegisterIn):
 
 @app.post("/auth/login")
 def login(body: RegisterIn):
+    from datetime import datetime, timezone
     with Session(engine) as s:
         u = s.exec(select(User).where(User.email == body.email)).first()
+        if u and u.locked_until and u.locked_until.replace(tzinfo=timezone.utc) \
+                > datetime.now(timezone.utc):
+            raise HTTPException(423, "account locked: too many failed attempts, try later")
         if not u or not authmod.check_password(body.password, u.password_hash):
+            if u:
+                u.failed_attempts += 1
+                if u.failed_attempts >= secmod.MAX_FAILS:
+                    from datetime import timedelta as _td
+                    u.locked_until = datetime.now(timezone.utc) + _td(seconds=secmod.LOCK_SECONDS)
+                    u.failed_attempts = 0
+                s.add(u)
+                s.commit()
             raise HTTPException(401, "bad credentials")
+        u.failed_attempts = 0
+        u.locked_until = None
+        s.add(u)
+        s.commit()
+        return {"token": authmod.issue_token(u.id, u.email), "user_id": u.id}
+
+
+class OtpReq(BaseModel):
+    email: str
+
+
+@app.post("/auth/otp/request")
+def otp_request(body: OtpReq):
+    """Passwordless login step 1. Always returns ok (no account enumeration)."""
+    import hashlib as _hl
+    import secrets as _secrets
+    with Session(engine) as s:
+        u = s.exec(select(User).where(User.email == body.email)).first()
+        if u:
+            code = f"{_secrets.randbelow(900000) + 100000}"
+            s.add(OtpCode(user_id=u.id,
+                          code_hash=_hl.sha256(code.encode()).hexdigest()))
+            s.commit()
+            subj, text = notifmod.otp_message(code)
+            try:
+                notifmod.send(u.email, subj, text)
+            except Exception:
+                pass
+    return {"ok": True}
+
+
+class OtpVerify(BaseModel):
+    email: str
+    code: str
+
+
+@app.post("/auth/otp/verify")
+def otp_verify(body: OtpVerify):
+    from datetime import datetime, timedelta, timezone
+    import hashlib as _hl
+    with Session(engine) as s:
+        u = s.exec(select(User).where(User.email == body.email)).first()
+        if not u:
+            raise HTTPException(401, "bad code")
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+        cands = s.exec(select(OtpCode).where(
+            OtpCode.user_id == u.id, OtpCode.used_at.is_(None))).all()
+        good = None
+        for c0 in cands:
+            created = c0.created_at.replace(tzinfo=timezone.utc) \
+                if c0.created_at.tzinfo is None else c0.created_at
+            if created >= cutoff and c0.code_hash == _hl.sha256(body.code.encode()).hexdigest():
+                good = c0
+                break
+        if not good:
+            raise HTTPException(401, "bad code")
+        good.used_at = datetime.now(timezone.utc)
+        u.failed_attempts = 0
+        u.locked_until = None
+        s.add(good)
+        s.add(u)
+        s.commit()
         return {"token": authmod.issue_token(u.id, u.email), "user_id": u.id}
 
 

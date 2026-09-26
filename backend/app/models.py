@@ -22,6 +22,8 @@ class User(SQLModel, table=True):
     state: str = ""
     is_admin: bool = False
     telegram_chat: str = ""
+    failed_attempts: int = 0
+    locked_until: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -67,6 +69,15 @@ class Progress(SQLModel, table=True):
     map_slug: str = Field(index=True)
     step_id: str = ""
     done_at: datetime = Field(default_factory=utcnow)
+
+
+class OtpCode(SQLModel, table=True):
+    """Hashed OTP for passwordless login. Single-use, 10-min expiry."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    code_hash: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    used_at: Optional[datetime] = None
 
 
 class LinkCode(SQLModel, table=True):
