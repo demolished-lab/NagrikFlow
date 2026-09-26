@@ -4,6 +4,7 @@ Each migration is a function taking (engine). Applied versions tracked in
 schema_version table. Runs at startup, in order. SQLite + Postgres compatible
 (SQLAlchemy DDL only). New schema change = append new function + list entry.
 """
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -71,7 +72,29 @@ def m004_oauth_state(engine):
     SQLModel.metadata.create_all(engine)  # checkfirst: new tables only
 
 
-MIGRATIONS = [m001_base, m002_seed_udyam, m003_security_jobs, m004_oauth_state]
+def m005_grievances(engine):
+    """Grievance table for DPDP Act compliance."""
+    SQLModel.metadata.create_all(engine)  # checkfirst: new tables only
+
+
+MIGRATIONS = [m001_base, m002_seed_udyam, m003_security_jobs, m004_oauth_state, m005_grievances]
+
+# Optionally add PostgreSQL-specific migrations
+_DB_URL = os.environ.get("DATABASE_URL", "sqlite:///./civic.db")
+
+
+def _try_add_pg_migrations(migrations_list):
+    """Add pg_trgm/index migrations only when DATABASE_URL points to Postgres."""
+    if not (_DB_URL.startswith("postgresql://") or _DB_URL.startswith("postgresql+psycopg://")):
+        return
+    try:
+        from . import migrate_pg as mpg_mod
+        migrations_list.append(mpg_mod.m005_postgres)
+    except ImportError:
+        pass  # migrate_pg.py absent — silently skip PG migration
+
+
+_try_add_pg_migrations(MIGRATIONS)
 
 
 def migrate(engine):

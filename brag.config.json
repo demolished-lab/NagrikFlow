@@ -1,0 +1,35 @@
+{
+  "project": {
+    "name": "Civic Path Navigator",
+    "description": "Consent-based personal civic navigator for Indian citizens",
+    "tagline": "Navigate Indian government services with confidence"
+  },
+  "screenshots": [
+    {"url": "http://127.0.0.1:5173", "caption": "Welcome screen with tricolor branding"},
+    {"url": "http://127.0.0.1:5173", "after_login": true, "action": "click_nav_dashboard", "caption": "Personal dashboard with verified documents"},
+    {"url": "http://127.0.0.1:5173", "action": "click_nav_roadmap", "caption": "Visual roadmap with parallel branching"},
+    {"url": "http://127.0.0.1:5173", "action": "click_nav_agent", "caption": "Mini-Hermes AI assistant interface"},
+    {"url": "http://127.0.0.1:5173", "action": "click_nav_admin", "caption": "Admin desk for map management"}
+  ],
+  "narration": {
+    "style": "confident_civic_tech",
+    "language": "english_with_hindi_flavor",
+    "key_points": [
+      "Built for Digital India initiative",
+      "DPDP Act compliant from day one",
+      "Consent-first architecture",
+      "Anti-bot protection built in",
+      "Real-time AI assistance",
+      "Bilingual support: English & Hindi"
+    ]
+  },
+  "music": {
+    "style": "inspirational_civic",
+    "mood": "professional_optimistic"
+  },
+  "effects": {
+    "transitions": "smooth_fade",
+    "text_overlays": true,
+    "brand_colors": ["#E67E22", "#1E8449", "#2C3E50"]
+  }
+}

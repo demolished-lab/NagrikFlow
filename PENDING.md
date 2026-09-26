@@ -33,7 +33,7 @@ Ordered by unblock-value. Checked items are done; unchecked need you or a key.
 - [ ] **DigiLocker sandbox end-to-end** — run the consent flow against
   `sandbox.api-setu.in` once Requester creds exist (mock passes today).
 - [ ] **Parallel-branch rendering** — DAG supports it; Roadmap UI lays out top-down only.
-- [x] **pytest suite (25 tests) + GitHub Actions CI**.
+- [x] **pytest suite (39 tests)** — agent tools schema, audit log, admin gating, grievance model.
 - [ ] **MiroFish prediction lane (Phase-4)** — AGPL-3.0, heavy infra; pattern-only for now.
 
 ## Done (do not regress)
@@ -48,4 +48,5 @@ Ordered by unblock-value. Checked items are done; unchecked need you or a key.
 - [x] Bynara-first LLM lane (4 probed free models) + minicpm5 offline fallback
 - [x] Scrape cascade (3 tiers live) + worker build-map + admin verify desk
 - [x] Watchman change-detector (proven: mutation → auto-unverify)
-- [x] Persona suite 20/20 + life-sim 8/8 green; frontend builds clean
+- [x] **Persona suite 20/20 + life-sim 8/8 green; frontend builds clean**\n- [x] **Mini-Hermes agent subsystem** — 10 tools (read/write/patch/search/cmd), audit log, sub-agent spawning via ThreadPoolExecutor, REST API + frontend widget\n- [x] **Landing page** — tricolor branding, feature grid, trust badges, bilingual (en/hi) with proper Devanagari rendering
+- [x] **Full Hindi i18n** — all UI strings including agent panel and landing page translated

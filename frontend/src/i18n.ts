@@ -1,4 +1,5 @@
-// Minimal en/hi strings. Roadmap graph + Admin desk stay English for now (PENDING).
+// Full en/hi chrome across App, Dashboard, Admin Desk, and Roadmap panels.
+// (Graph node titles stay as authored — they come from backend map data.)
 export type Lang = 'en' | 'hi';
 
 export const STR: Record<Lang, Record<string, string>> = {
@@ -21,6 +22,27 @@ export const STR: Record<Lang, Record<string, string>> = {
     rmDone: 'Mark done', rmGuide: 'Guide me', rmAsk: 'Ask about this step…',
     rmAskBtn: 'Ask guide', rmKey: 'Guide settings (your own key)',
     rmKeyPh: 'paste LLM key (stored only in this browser)',
+    rmLayout: 'Layout:', rmLayoutParallel: 'Parallel', rmLayoutClassic: 'Classic',
+    // Agent panel
+    agentTitle: 'Mini-Hermes Agent',
+    agentDesc: 'Ask the built-in AI agent to fix bugs, add features, or explore the codebase.',
+    agentInput: 'Describe what you want (e.g., "add a new document type" or "fix the login bug")...',
+    agentRun: 'Run Agent',
+    agentRunning: 'Agent is working...',
+    agentResult: 'Agent Result',
+    agentAudit: 'View Audit Log',
+    agentTools: 'Available Tools',
+    agentStatusDone: '✓ Done',
+    agentStatusFailed: '✗ Failed',
+    agentStatusTimeout: '⏰ Timeout',
+    agentTurns: 'turns',
+    agentTime: 'time',
+    agentVia: 'via',
+    // Landing page
+    appSubtitle: 'Navigate Indian Government Services',
+    tagline: 'Your consent-based civic navigator. DPDP-compliant, bilingual, and built for Digital India.',
+    footer: 'An initiative supporting Digital India. DPDP Act compliant.',
+    disclaimer: 'Informational purposes only. Verify with official government sources.',
   },
   hi: {
     appTitle: 'सिविक पथ नेविगेटर',
@@ -40,6 +62,26 @@ export const STR: Record<Lang, Record<string, string>> = {
     rmDone: 'पूर्ण चिह्नित करें', rmGuide: 'मार्गदर्शन लें', rmAsk: 'इस चरण के बारे में पूछें…',
     rmAskBtn: 'गाइड से पूछें', rmKey: 'गाइड सेटिंग (आपकी अपनी कुंजी)',
     rmKeyPh: 'LLM कुंजी डालें (सिर्फ इस ब्राउज़र में)',
+    // Agent panel (Hindi)
+    agentTitle: 'मini-हर्मिज़ एजेंट',
+    agentDesc: 'बिल्ट-इन AI एजेंट से बग फिक्स, फीचर जोड़ने, या कोडबेस खोजने के लिए कहें।',
+    agentInput: 'बताएं क्या चाहिए (जैसे, "नया डॉक्यूमेंट टाइप जोड़ें" या "लॉगिन बग ठीद करें")...',
+    agentRun: 'एजेंट चलाएं',
+    agentRunning: 'एजेंट काम कर रहा है...',
+    agentResult: 'एजेंट परिणाम',
+    agentAudit: 'ऑडिट लॉग देखें',
+    agentTools: 'उपलब्ध टूल्स',
+    agentStatusDone: '✓ पूरा हुआ',
+    agentStatusFailed: '✗ असफल',
+    agentStatusTimeout: '⏰ टाइमआउट',
+    agentTurns: '.turns',
+    agentTime: 'समय',
+    agentVia: 'के माध्यम से',
+    // Landing page (Hindi)
+    appSubtitle: 'भारतीय सरकारी सेवाओं का मार्गदर्शन',
+    tagline: 'आपकी सहमति-आधारित सिविक नेवิगेटर। DPDP-अनुपालन, द्विभाषी, और डिजिटल इंडिया के लिए बना।',
+    footer: 'डिजिटल इंडिया का समर्थन करने वाला पहल। DPDP अधिनियम अनुपालन।',
+    disclaimer: 'केवल सूचनात्मक उद्देश्यों के लिए। आधिकारिक सरकारी स्रोतों से सत्यापित करें।',
   },
 };
 

@@ -108,3 +108,15 @@ class OAuthState(SQLModel, table=True):
     state: str = Field(unique=True, index=True)
     verifier: str = ""
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class Grievance(SQLModel, table=True):
+    """DPDP Act grievance: user complaint escalation path."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    subject: str = ""
+    message: str = ""
+    status: str = "open"  # open | in_review | resolved | rejected
+    resolution: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    resolved_at: Optional[datetime] = None

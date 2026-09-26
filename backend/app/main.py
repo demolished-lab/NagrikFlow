@@ -4,6 +4,7 @@ import os
 import re
 import ipaddress
 import socket
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -41,8 +42,11 @@ from . import discover as discovermod  # noqa: E402
 from . import obs as obsmod  # noqa: E402
 from . import backup as backupmod  # noqa: E402
 from . import edge as edgemod  # noqa: E402
+from . import agent as agentmod  # noqa: E402
+from . import hermes_core as hermesmod  # noqa: E402
+from . import hermes_subagents as submod  # noqa: E402
 from fastapi import BackgroundTasks as _BT  # noqa: E402
-from .models import Consent, Job, LinkCode, OAuthState, OtpCode, Progress, TaskMap, User, VaultItem
+from .models import Consent, Grievance, Job, LinkCode, OAuthState, OtpCode, Progress, TaskMap, User, VaultItem
 
 ADMIN_DEFAULT = "demo@civic.test" if os.environ.get("ALLOW_DEV_SECRET") == "1" else ""
 ADMIN_EMAILS = {e.strip().lower() for e in
@@ -569,3 +573,292 @@ def admin_discover(body: DiscoverIn, admin: User = Depends(require_admin)):
         raise HTTPException(400, "task required")
     return {"task": body.task,
             "urls": discovermod.discover(body.task, min(body.max_results, 10))}
+
+
+# ---------------- Mini-Hermes Agent -----------------------------------------
+
+class AgentRunIn(BaseModel):
+    task: str
+    mode: str = "auto"
+    budget: int = 20
+
+
+@app.post("/agent/run")
+def agent_run(body: AgentRunIn, bg: _BT, admin: User = Depends(require_admin)):
+    """Launch mini-Hermes agent task asynchronously. Poll GET /agent/result/{job_id}."""
+    with Session(engine) as s:
+        j = Job(kind="agent", created_by=admin.id,
+                payload=json.dumps({"task": body.task, "mode": body.mode, "budget": body.budget}))
+        s.add(j)
+        s.commit()
+        s.refresh(j)
+        jid = j.id
+    bg.add_task(agentmod.run_agent_job, engine, jid)
+    return {"job_id": jid, "status": "queued"}
+
+
+@app.get("/agent/result/{job_id}")
+def agent_result(job_id: int, admin: User = Depends(require_admin)):
+    from .models import Job as JobModel
+    with Session(engine) as s:
+        j = s.get(JobModel, job_id)
+        if not j:
+            raise HTTPException(404, "unknown job")
+        return {"job_id": j.id, "status": j.status,
+                "result": json.loads(j.result), "finished": bool(j.finished_at)}
+
+
+@app.get("/agent/tools")
+def agent_tools(admin: User = Depends(require_admin)):
+    """List available agent tools and their schemas."""
+    return {"tools": agentmod.TOOL_SCHEMA}
+
+
+@app.get("/agent/audit")
+def agent_audit(n: int = 50, admin: User = Depends(require_admin)):
+    """Read recent agent audit log entries."""
+    return {"entries": agentmod.audit_read(n)}
+
+
+# ---------------- Hermes Core Agent ----------------------------------------
+
+class HermesRunIn(BaseModel):
+    task: str
+    mode: str = "auto"
+    budget: int = 30
+
+
+@app.post("/hermes/run")
+def hermes_run(body: HermesRunIn, bg: _BT, admin: User = Depends(require_admin)):
+    """Launch Hermes autonomous agent task asynchronously."""
+    with Session(engine) as s:
+        j = Job(kind="hermes", created_by=admin.id,
+                payload=json.dumps({"task": body.task, "mode": body.mode, "budget": body.budget}))
+        s.add(j)
+        s.commit()
+        s.refresh(j)
+        jid = j.id
+    bg.add_task(hermesmod.run_hermes_job, engine, jid)
+    return {"job_id": jid, "status": "queued"}
+
+
+@app.get("/hermes/result/{job_id}")
+def hermes_result(job_id: int, admin: User = Depends(require_admin)):
+    from .models import Job as JobModel
+    with Session(engine) as s:
+        j = s.get(JobModel, job_id)
+        if not j:
+            raise HTTPException(404, "unknown job")
+        return {"job_id": j.id, "status": j.status,
+                "result": json.loads(j.result), "finished": bool(j.finished_at)}
+
+
+@app.get("/hermes/tools")
+def hermes_tools(admin: User = Depends(require_admin)):
+    """List available Hermes tools and their schemas."""
+    return {"tools": list(hermesmod.TOOLS.values())}
+
+
+# ---------------- Sub-Agent Spawning --------------------------------------
+
+class SubAgentIn(BaseModel):
+    parent_job_id: int
+    tasks: list[dict]
+
+
+@app.post("/hermes/spawn")
+def hermes_spawn(body: SubAgentIn, admin: User = Depends(require_admin)):
+    """Spawn parallel sub-agents for specialized work."""
+    try:
+        sub_ids = submod.spawn_parallel(engine, body.parent_job_id, body.tasks)
+        return {"sub_agent_ids": sub_ids, "count": len(sub_ids)}
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/hermes/sub/{sub_id}")
+def hermes_sub_result(sub_id: int, admin: User = Depends(require_admin)):
+    from .models import Job as JobModel
+    with Session(engine) as s:
+        j = s.get(JobModel, sub_id)
+        if not j:
+            raise HTTPException(404, "unknown sub-agent")
+        return {"sub_id": j.id, "status": j.status,
+                "result": json.loads(j.result), "finished": bool(j.finished_at)}
+
+
+# ---------------- DPDP Act compliance --------------------------------------
+# Consent withdrawal, data export/erasure, grievance mechanism.
+
+class GrievanceIn(BaseModel):
+    subject: str
+    message: str
+
+
+@app.post("/me/data-export")
+def data_export(user: User = Depends(current_user)):
+    """DPDP data-portability: download all your data as a JSON receipt."""
+    with Session(engine) as s:
+        items = s.exec(select(VaultItem).where(VaultItem.user_id == user.id)).all()
+        consents = s.exec(select(Consent).where(Consent.user_id == user.id)).all()
+        progs = s.exec(select(Progress).where(Progress.user_id == user.id)).all()
+        receipt = {
+            "format": "civic-pathfinder-data-receipt/v1",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "user": {"id": user.id, "email": user.email,
+                     "name": user.name, "city": user.city, "state": user.state,
+                     "created_at": user.created_at.isoformat() if user.created_at else None},
+            "vault": [{"kind": i.kind, "label": i.label, "issuer": i.issuer,
+                       "reference": i.reference,
+                       "verified_at": i.verified_at.isoformat() if i.verified_at else None,
+                       "expires_at": i.expires_at.isoformat() if i.expires_at else None,
+                       "meta": i.meta} for i in items],
+            "consents": [{"purpose": c.purpose, "scopes": c.scopes,
+                          "granted_at": c.granted_at.isoformat() if c.granted_at else None,
+                          "withdrawn_at": c.withdrawn_at.isoformat() if c.withdrawn_at else None}
+                         for c in consents],
+            "progress": [{"map": p.map_slug, "step": p.step_id,
+                          "done_at": p.done_at.isoformat() if p.done_at else None}
+                         for p in progs],
+        }
+        return receipt
+
+
+@app.post("/me/consent/withdraw")
+def consent_withdraw(user: User = Depends(current_user)):
+    """Withdraw DigiLocker consent → immediately erases vault items.
+    Returns count of erased records."""
+    from datetime import datetime, timezone as _tz
+    with Session(engine) as s:
+        # Mark consents withdrawn
+        consents = s.exec(select(Consent).where(
+            Consent.user_id == user.id,
+            Consent.withdrawn_at.is_(None))).all()
+        for c in consents:
+            c.withdrawn_at = datetime.now(_tz.utc)
+            s.add(c)
+        # Erase vault (storage limitation — DPDP §8)
+        items = s.exec(select(VaultItem).where(VaultItem.user_id == user.id)).all()
+        for it in items:
+            s.delete(it)
+        # Erase OAuth states + link codes
+        for row in s.exec(select(OAuthState).where(OAuthState.user_id == user.id)).all():
+            s.delete(row)
+        for row in s.exec(select(LinkCode).where(LinkCode.user_id == user.id)).all():
+            s.delete(row)
+        s.commit()
+        return {"consents_withdrawn": len(consents), "vault_items_erased": len(items)}
+
+
+@app.delete("/me/account")
+def account_delete(user: User = Depends(current_user)):
+    """Right to erasure: permanently delete account and all associated data."""
+    with Session(engine) as s:
+        uid = user.id
+        # Delete in FK-safe order
+        for row in s.exec(select(VaultItem).where(VaultItem.user_id == uid)).all():
+            s.delete(row)
+        for row in s.exec(select(Consent).where(Consent.user_id == uid)).all():
+            s.delete(row)
+        for row in s.exec(select(Progress).where(Progress.user_id == uid)).all():
+            s.delete(row)
+        for row in s.exec(select(OtpCode).where(OtpCode.user_id == uid)).all():
+            s.delete(row)
+        for row in s.exec(select(LinkCode).where(LinkCode.user_id == uid)).all():
+            s.delete(row)
+        for row in s.exec(select(OAuthState).where(OAuthState.user_id == uid)).all():
+            s.delete(row)
+        u = s.get(User, uid)
+        if u:
+            s.delete(u)
+        s.commit()
+    return {"deleted": True}
+
+
+@app.post("/me/grievance")
+def grievance_submit(body: GrievanceIn, user: User = Depends(current_user)):
+    """DPDP §24 — submit grievance; must respond within prescribed period."""
+    if not body.subject.strip() or not body.message.strip():
+        raise HTTPException(400, "subject + message required")
+    with Session(engine) as s:
+        g = Grievance(user_id=user.id, subject=body.subject.strip(),
+                      message=body.message.strip())
+        s.add(g)
+        s.commit()
+        s.refresh(g)
+        try:
+            from . import notify as notifmod
+            notifmod.send(
+                os.environ.get("GRIEVANCE_EMAIL", "grievance@civicpath.in"),
+                f"New grievance #{g.id} from {user.email}",
+                f"Subject: {g.subject}\n\n{g.message[:4000]}")
+        except Exception:
+            pass
+        return {"id": g.id, "status": g.status,
+                "expected_response_days": 7}
+
+
+@app.get("/me/grievance")
+def grievance_list(user: User = Depends(current_user)):
+    with Session(engine) as s:
+        gs = s.exec(select(Grievance).where(Grievance.user_id == user.id)).all()
+        return [{"id": g.id, "subject": g.subject, "status": g.status,
+                 "created_at": g.created_at.isoformat() if g.created_at else None,
+                 "resolution": g.resolution, } for g in gs]
+
+
+@app.get("/admin/grievances")
+def admin_grievances(status: str = "", admin: User = Depends(require_admin)):
+    """Admin: list all grievances (filter by status)."""
+    with Session(engine) as s:
+        q = select(Grievance)
+        if status:
+            q = q.where(Grievance.status == status)
+        gs = s.exec(q.order_by(Grievance.created_at.desc())).all()
+        return [{"id": g.id, "user_id": g.user_id, "subject": g.subject,
+                 "message": g.message, "status": g.status,
+                 "created_at": g.created_at.isoformat() if g.created_at else None} for g in gs]
+
+
+class GrievanceResolveIn(BaseModel):
+    status: str
+    resolution: str = ""
+
+
+@app.post("/admin/grievances/{gid}/resolve")
+def admin_grievance_resolve(gid: int, body: GrievanceResolveIn,
+                            admin: User = Depends(require_admin)):
+    if body.status not in ("open", "in_review", "resolved", "rejected"):
+        raise HTTPException(400, "invalid status")
+    with Session(engine) as s:
+        g = s.get(Grievance, gid)
+        if not g:
+            raise HTTPException(404, "unknown grievance")
+        g.status = body.status
+        g.resolution = body.resolution
+        if body.status in ("resolved", "rejected"):
+            from datetime import datetime as _dt, timezone as _tz
+            g.resolved_at = _dt.now(_tz.utc)
+        s.add(g)
+        s.commit()
+        return {"id": g.id, "status": g.status}
+
+
+# Public legal endpoints — no login required (DPDP transparency)
+
+@app.get("/legal/privacy")
+def legal_privacy():
+    """Serve the privacy policy."""
+    p = Path(__file__).resolve().parent.parent / "privacy_policy.md"
+    if not p.exists():
+        raise HTTPException(404, "privacy policy not found")
+    return {"policy": p.read_text(encoding="utf-8")}
+
+
+@app.get("/legal/terms")
+def legal_terms():
+    """Serve the terms of service."""
+    p = Path(__file__).resolve().parent.parent / "terms_of_service.md"
+    if not p.exists():
+        raise HTTPException(404, "terms not found")
+    return {"terms": p.read_text(encoding="utf-8")}
