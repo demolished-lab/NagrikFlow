@@ -51,10 +51,36 @@ npm run dev                                                         # in fronten
 ## Verify
 
 ```bash
-python -m pytest backend/tests/ -q        # 29 tests
+python -m pytest backend/tests/ -q        # 43 tests (up from 29)
 python backend/sim/run_sim.py             # 8-step life sim (mock world)
 python backend/sim/run_personas.py        # 20 personas, 20/20 sane
 ```
+
+## Hermes Autonomous Agent
+
+The built-in agent system can handle any task — code fixes, feature adds, deployments, research:
+
+```bash
+# Run Hermes via CLI
+cd backend && python -m app.hermes_core --task "fix the login bug" --budget 20
+
+# Or via REST API (admin only)
+curl -X POST http://127.0.0.1:8000/hermes/run \
+  -H "Authorization: Bearer <token>" \
+  -d '{"task":"add parallel-branch roadmap rendering","mode":"auto","budget":30}'
+
+# Spawn parallel sub-agents for specialized work
+curl -X POST http://127.0.0.1:8000/hermes/spawn \
+  -H "Authorization: Bearer <token>" \
+  -d '{"parent_job_id":1,"tasks":[{"id":"t1","task":"write docs"},{"id":"t2","task":"add tests"}]}'
+
+# View available tools (22 total)
+curl http://127.0.0.1:8000/hermes/tools -H "Authorization: Bearer <token>"
+```
+
+**Tools include:** read_file, write_file, patch_file, search_files, run_cmd, validate_python, list_files, git_status, git_commit, run_tests, diagnose_db, plan, spawn_subagent, search_web, fetch_url, deploy_frontend, commit_changes, check_health, and more.
+
+**Frontend:** Open the Agent tab in the web UI for a visual interface with chat, tools browser, and audit log.
 
 ## Docs
 
