@@ -33,11 +33,16 @@ Ordered by unblock-value. Checked items are done; unchecked need you or a key.
 - [ ] **DigiLocker sandbox end-to-end** — run the consent flow against
   `sandbox.api-setu.in` once Requester creds exist (mock passes today).
 - [ ] **Parallel-branch rendering** — DAG supports it; Roadmap UI lays out top-down only.
-- [x] **Hindi toggle (App + Dashboard) + WCAG basics** — Roadmap/Admin English-only for now.
-- [ ] **Test suite + CI** — sim scripts are manual; convert to pytest + GitHub Actions.
+- [x] **pytest suite (25 tests) + GitHub Actions CI**.
 - [ ] **MiroFish prediction lane (Phase-4)** — AGPL-3.0, heavy infra; pattern-only for now.
 
 ## Done (do not regress)
+- [x] **Secrets** — rotation, 2h TTL, boot refusal without APP_SECRET.
+- [x] **Observability** — JSON logs + `/admin/metrics`.
+- [x] **Backups** — online snapshots to E: + retention + endpoints.
+- [x] **Postgres** — compose + driver ready (needs a server to go live).
+- [x] **WCAG/i18n** — full Hindi chrome, contrast, skip-link, aria-live.
+- [x] **Load/edge** — headers, 1 MB cap, JSON errors, p95 dashboard test.
 - [x] `.venv-civic` (Py 3.11): agent-reach 1.5, crawl4ai 0.9.4, trafilatura, cloakbrowser, FastAPI stack
 - [x] Auth/JWT, per-user vault + Telegram link isolation (lab-tested)
 - [x] Bynara-first LLM lane (4 probed free models) + minicpm5 offline fallback

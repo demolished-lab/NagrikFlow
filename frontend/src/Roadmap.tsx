@@ -3,6 +3,7 @@ import ReactFlow, { Background, Controls, MiniMap, Node, Edge } from 'reactflow'
 import dagre from 'dagre';
 import 'reactflow/dist/style.css';
 import { api } from './api';
+import { STR, lang } from './i18n';
 
 type GNode = { id: string; type: string; title: string; detail?: string; url?: string; fee?: string };
 
@@ -49,6 +50,7 @@ function layout(nodes: GNode[], edges: string[][]): { nodes: Node[]; edges: Edge
 }
 
 export default function Roadmap({ slug }: { slug: string }) {
+  const t = STR[lang()];
   const [flow, setFlow] = useState<{ nodes: Node[]; edges: Edge[] }>({ nodes: [], edges: [] });
   const [sel, setSel] = useState<GNode | null>(null);
   const [all, setAll] = useState<GNode[]>([]);
@@ -113,25 +115,25 @@ export default function Roadmap({ slug }: { slug: string }) {
         </ReactFlow>
       </div>
       <div style={{ flex: 1, border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-        {!sel && <p>Click a step on the map.</p>}
+        {!sel && <p>{t.rmClick}</p>}
         {sel && (
           <>
             <h3>{sel.title}</h3>
             <p>{sel.detail}</p>
-            {sel.fee && <p><b>Fee:</b> {sel.fee}</p>}
-            {sel.url && <p><a href={sel.url} target="_blank" rel="noreferrer">Open official site ↗</a></p>}
-            <button onClick={markDone}>✓ Mark done</button>
+            {sel.fee && <p><b>{t.rmFee}:</b> {sel.fee}</p>}
+            {sel.url && <p><a href={sel.url} target="_blank" rel="noreferrer">{t.rmOpen} ↗</a></p>}
+            <button onClick={markDone}>✓ {t.rmDone}</button>
             <hr />
-            <h4>🧭 Guide me</h4>
-            <input placeholder="Ask about this step…" aria-label="Ask the guide" value={gq}
+            <h4>🧭 {t.rmGuide}</h4>
+            <input placeholder={t.rmAsk} aria-label={t.rmAsk} value={gq}
               onChange={(e) => setGq(e.target.value)}
               style={{ width: '100%', padding: 6, marginBottom: 6 }} />
-            <button onClick={askGuide} disabled={gBusy}>{gBusy ? 'Asking…' : 'Ask guide'}</button>
-            {guide && <p><small>{guide}</small></p>}
+            <button onClick={askGuide} disabled={gBusy}>{gBusy ? '…' : t.rmAskBtn}</button>
+            {guide && <p aria-live="polite"><small>{guide}</small></p>}
             <details>
-              <summary><small>Guide settings (your own key)</small></summary>
-              <input type="password" placeholder="paste LLM key (stored only in this browser)"
-                aria-label="Guide LLM key"
+              <summary><small>{t.rmKey}</small></summary>
+              <input type="password" placeholder={t.rmKeyPh}
+                aria-label={t.rmKey}
                 defaultValue={localStorage.getItem('guide_key') || ''}
                 onBlur={(e) => localStorage.setItem('guide_key', e.target.value.trim())}
                 style={{ width: '100%', padding: 6 }} />

@@ -14,9 +14,9 @@ export default function Dashboard() {
   }, []);
 
   if (err) return <p role="alert" style={{ color: 'red' }}>{err}</p>;
-  if (!d) return <p>{t.loading}</p>;
+  if (!d) return <p aria-live="polite">{t.loading}</p>;
   return (
-    <div style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
+    <div aria-live="polite" style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
       <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
         <h3>📋 {t.have}</h3>
         <p>{d.have.length ? d.have.join(' • ') : t.noDocs}</p>

@@ -17,3 +17,10 @@ button {
   position: absolute; width: 1px; height: 1px;
   clip-path: inset(50%); overflow: hidden; white-space: nowrap;
 }
+/* contrast: small secondary text must clear 4.5:1 on white */
+small { color: #444; }
+.skip-link {
+  position: absolute; left: -999px; top: 0; background: #1a73e8; color: #fff;
+  padding: 8px 14px; z-index: 100; border-radius: 0 0 6px 0;
+}
+.skip-link:focus { left: 0; }

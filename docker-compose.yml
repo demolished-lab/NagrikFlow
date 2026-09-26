@@ -1,0 +1,41 @@
+# Production compose: Postgres + API. Frontend ships separately to Cloudflare Pages.
+# First boot: docker compose up -d db && docker compose run --rm api python -c "import app" (migrations run at startup).
+# NOTE: compose is config-complete but NOT live-tested here (no docker daemon on dev box).
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: civic
+      POSTGRES_USER: civic
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U civic"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  api:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://civic:${POSTGRES_PASSWORD}@db:5432/civic
+      APP_SECRET: ${APP_SECRET:?set it}
+      APP_SECRET_PREV: ${APP_SECRET_PREV:-}
+      BACKUP_DIR: /backups
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      DIGILOCKER_CLIENT_ID: ${DIGILOCKER_CLIENT_ID:-}
+      DIGILOCKER_CLIENT_SECRET: ${DIGILOCKER_CLIENT_SECRET:-}
+      BYNARA_API_KEY: ${BYNARA_API_KEY:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    ports:
+      - "127.0.0.1:8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./backups:/backups
+volumes:
+  pgdata:

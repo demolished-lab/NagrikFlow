@@ -12,10 +12,10 @@ from typing import Optional
 
 import jwt
 
-SECRET = os.environ.get("APP_SECRET", "dev-only-change-me")
+from . import secrets as secretmod
+
 ISSUER = "civic-pathfinder"
 ALGO = "HS256"
-SESSION_TTL = 12 * 3600
 
 
 def hash_password(password: str) -> str:
@@ -35,16 +35,19 @@ def check_password(password: str, stored: str) -> bool:
 
 def issue_token(user_id: int, email: str) -> str:
     now = int(time.time())
+    kid, secret = secretmod.secrets()[0]
     return jwt.encode(
         {"sub": str(user_id), "email": email, "iss": ISSUER,
-         "iat": now, "exp": now + SESSION_TTL},
-        SECRET, algorithm=ALGO,
+         "iat": now, "exp": now + secretmod.TTL},
+        secret, algorithm=ALGO, headers={"kid": kid},
     )
 
 
 def verify_token(token: str) -> Optional[dict]:
-    try:
-        payload = jwt.decode(token, SECRET, algorithms=[ALGO], issuer=ISSUER)
-        return payload
-    except jwt.PyJWTError:
-        return None
+    """Try each known secret newest-first (rotation-safe)."""
+    for _, secret in secretmod.secrets():
+        try:
+            return jwt.decode(token, secret, algorithms=[ALGO], issuer=ISSUER)
+        except jwt.PyJWTError:
+            continue
+    return None

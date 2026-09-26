@@ -34,6 +34,9 @@ from . import security as secmod  # noqa: E402
 from . import notify as notifmod  # noqa: E402
 from . import jobs as jobsmod  # noqa: E402
 from . import discover as discovermod  # noqa: E402
+from . import obs as obsmod  # noqa: E402
+from . import backup as backupmod  # noqa: E402
+from . import edge as edgemod  # noqa: E402
 from fastapi import BackgroundTasks as _BT  # noqa: E402
 from .models import Consent, Job, LinkCode, OAuthState, OtpCode, Progress, TaskMap, User, VaultItem
 
@@ -45,6 +48,8 @@ engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(title="Civic Path Navigator")
 app.middleware("http")(secmod.rate_limit_middleware)
+app.middleware("http")(obsmod.obs_middleware)
+edgemod.install(app)
 
 
 def current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> User:
@@ -467,6 +472,23 @@ def job_status(job_id: int, admin: User = Depends(require_admin)):
             raise HTTPException(404, "unknown job")
         return {"job_id": j.id, "kind": j.kind, "status": j.status,
                 "result": json.loads(j.result), "finished": j.finished_at}
+
+
+@app.get("/admin/metrics")
+def admin_metrics(admin: User = Depends(require_admin)):
+    """Request counts, error counts, avg latency per route (in-memory)."""
+    return obsmod.snapshot()
+
+
+@app.post("/admin/backup")
+def admin_backup(admin: User = Depends(require_admin)):
+    """Online snapshot now (E: by default). Pair with Task Scheduler daily."""
+    return backupmod.run(engine)
+
+
+@app.get("/admin/backups")
+def admin_backups(admin: User = Depends(require_admin)):
+    return backupmod.listing()
 
 
 class DiscoverIn(BaseModel):

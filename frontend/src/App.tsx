@@ -50,6 +50,7 @@ export default function App() {
   }
   return (
     <div style={{ padding: 16, fontFamily: 'sans-serif' }}>
+      <a href="#main" className="skip-link">Skip to content</a>
       <h2>🗺️ {t.appTitle}</h2>
       <button onClick={() => setTab('me')}>{t.myDashboard}</button>{' '}
       <button onClick={() => setTab('map')}>{t.roadmap}</button>{' '}
@@ -60,7 +61,9 @@ export default function App() {
         <option value="hi">हिन्दी</option>
       </select>
       <hr />
+      <main id="main">
       {tab === 'me' ? <Dashboard /> : tab === 'map' ? <Roadmap slug="udyam-register" /> : <Admin />}
+      </main>
     </div>
   );
 }

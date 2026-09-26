@@ -17,6 +17,10 @@ export const STR: Record<Lang, Record<string, string>> = {
     admTitle: 'Maps under review', admBuild: 'Build new map (scrape cascade)',
     admVerify: 'Stamp verified', admUnverify: 'Unverify',
     admRecheck: 'Recheck source', admRecheckAll: 'Recheck all sources',
+    rmClick: 'Click a step on the map.', rmFee: 'Fee', rmOpen: 'Open official site',
+    rmDone: 'Mark done', rmGuide: 'Guide me', rmAsk: 'Ask about this step…',
+    rmAskBtn: 'Ask guide', rmKey: 'Guide settings (your own key)',
+    rmKeyPh: 'paste LLM key (stored only in this browser)',
   },
   hi: {
     appTitle: 'सिविक पथ नेविगेटर',
@@ -32,6 +36,10 @@ export const STR: Record<Lang, Record<string, string>> = {
     tgBtn: 'लिंक कोड लें', tgSend: 'हमारे बॉट को भेजें (15 मिनट में समाप्त, एक बार)।',
     admTitle: 'समीक्षाधीन नक्शे', admBuild: 'नया नक्शा बनाएं', admVerify: 'सत्यापित मुहर',
     admUnverify: 'असत्यापित करें', admRecheck: 'स्रोत जांचें', admRecheckAll: 'सभी स्रोत जांचें',
+    rmClick: 'नक्शे पर कोई चरण दबाएं।', rmFee: 'शुल्क', rmOpen: 'आधिकारिक साइट खोलें',
+    rmDone: 'पूर्ण चिह्नित करें', rmGuide: 'मार्गदर्शन लें', rmAsk: 'इस चरण के बारे में पूछें…',
+    rmAskBtn: 'गाइड से पूछें', rmKey: 'गाइड सेटिंग (आपकी अपनी कुंजी)',
+    rmKeyPh: 'LLM कुंजी डालें (सिर्फ इस ब्राउज़र में)',
   },
 };
 

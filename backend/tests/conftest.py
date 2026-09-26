@@ -7,6 +7,7 @@ sys.path.insert(0, r"C:\Users\Raja\civic-pathfinder\backend")
 _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp.name}"
+os.environ["ALLOW_DEV_SECRET"] = "1"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

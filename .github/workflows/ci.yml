@@ -9,6 +9,7 @@ jobs:
         with: { python-version: "3.11" }
       - run: pip install -r backend/requirements.txt pytest httpx
       - run: python -m pytest backend/tests/ -q
+        env: { ALLOW_DEV_SECRET: "1" }
   frontend:
     runs-on: ubuntu-latest
     steps:
