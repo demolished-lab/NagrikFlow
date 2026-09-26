@@ -61,6 +61,11 @@ def cascade_fetch(url: str) -> tuple[str, str]:
             return fn(url), name
         except Exception:
             continue
+    try:
+        from . import discover as discovermod
+        return discovermod.fetch_text(url), "wigolo"
+    except Exception:
+        pass
     raise RuntimeError(f"all fetch tiers failed for {url}")
 
 

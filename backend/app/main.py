@@ -33,6 +33,7 @@ from . import watch as watchmod  # noqa: E402
 from . import security as secmod  # noqa: E402
 from . import notify as notifmod  # noqa: E402
 from . import jobs as jobsmod  # noqa: E402
+from . import discover as discovermod  # noqa: E402
 from fastapi import BackgroundTasks as _BT  # noqa: E402
 from .models import Consent, Job, LinkCode, OtpCode, Progress, TaskMap, User, VaultItem
 
@@ -446,3 +447,17 @@ def job_status(job_id: int, admin: User = Depends(require_admin)):
             raise HTTPException(404, "unknown job")
         return {"job_id": j.id, "kind": j.kind, "status": j.status,
                 "result": json.loads(j.result), "finished": j.finished_at}
+
+
+class DiscoverIn(BaseModel):
+    task: str
+    max_results: int = 8
+
+
+@app.post("/admin/discover")
+def admin_discover(body: DiscoverIn, admin: User = Depends(require_admin)):
+    """Keyless gov-URL discovery (wigolo) — feeds /admin/jobs/build."""
+    if not body.task.strip():
+        raise HTTPException(400, "task required")
+    return {"task": body.task,
+            "urls": discovermod.discover(body.task, min(body.max_results, 10))}
