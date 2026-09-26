@@ -2,9 +2,13 @@
 import json
 import os
 import re
+import ipaddress
+import socket
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -40,13 +44,24 @@ from . import edge as edgemod  # noqa: E402
 from fastapi import BackgroundTasks as _BT  # noqa: E402
 from .models import Consent, Job, LinkCode, OAuthState, OtpCode, Progress, TaskMap, User, VaultItem
 
+ADMIN_DEFAULT = "demo@civic.test" if os.environ.get("ALLOW_DEV_SECRET") == "1" else ""
 ADMIN_EMAILS = {e.strip().lower() for e in
-                os.environ.get("ADMIN_EMAILS", "demo@civic.test").split(",") if e.strip()}
+                os.environ.get("ADMIN_EMAILS", ADMIN_DEFAULT).split(",") if e.strip()}
 
 DB_URL = os.environ.get("DATABASE_URL", "sqlite:///./civic.db")
-engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+ENGINE_KWARGS = {"connect_args": {"check_same_thread": False}} if DB_URL.startswith("sqlite") else {}
+engine = create_engine(DB_URL, **ENGINE_KWARGS)
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(title="Civic Path Navigator")
+FRONTEND_ORIGINS = [o.strip() for o in os.environ.get(
+    "FRONTEND_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=FRONTEND_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 app.middleware("http")(secmod.rate_limit_middleware)
 app.middleware("http")(obsmod.obs_middleware)
 edgemod.install(app)
@@ -83,6 +98,28 @@ def _valid_email(e: str) -> bool:
     return bool(EMAIL_RE.match(e or ""))
 
 
+def _validate_fetch_url(url: str) -> str:
+    """Allow public HTTPS government sources only; block SSRF targets."""
+    try:
+        parsed = urlparse(url)
+        local_dev = os.environ.get("CIVIC_DEV") == "1" and parsed.hostname in {"localhost", "127.0.0.1"}
+        if (parsed.scheme != "https" and not local_dev) or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError
+        if local_dev:
+            return url
+        host = parsed.hostname.rstrip(".").lower()
+        if not (host.endswith(".gov.in") or host.endswith(".nic.in") or host in {"gov.in", "nic.in"}):
+            raise ValueError
+        addresses = {item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
+        if any(ipaddress.ip_address(addr).is_private or ipaddress.ip_address(addr).is_loopback
+               or ipaddress.ip_address(addr).is_link_local or ipaddress.ip_address(addr).is_reserved
+               for addr in addresses):
+            raise ValueError
+    except (ValueError, socket.gaierror, OSError):
+        raise HTTPException(400, "urls must be public HTTPS .gov.in or .nic.in sources")
+    return url
+
+
 def _init_db():
     from . import migrate as migratemod
     migratemod.migrate(engine)
@@ -98,10 +135,8 @@ def health():
 
 @app.post("/auth/register")
 def register(body: RegisterIn):
-    if not _valid_email(body.email) or len(body.password) < 4:
-        raise HTTPException(400, "valid email + password (4+ chars) required")
-    if not _valid_email(body.email) or len(body.password) < 4:
-        raise HTTPException(400, "valid email + password (4+ chars) required")
+    if not _valid_email(body.email) or len(body.password) < 8:
+        raise HTTPException(400, "valid email + password (8+ chars) required")
     with Session(engine) as s:
         if s.exec(select(User).where(User.email == body.email)).first():
             raise HTTPException(409, "email already registered")
@@ -212,43 +247,57 @@ def dl_connect(user: User = Depends(current_user)):
 class DLCallback(BaseModel):
     code: str
     state: str = ""
-    verifier: str = ""  # legacy clients holding their own verifier
 
 
-@app.post("/auth/digilocker/callback")
-def dl_callback(body: DLCallback, user: User = Depends(current_user)):
-    """Step 2: resolve user-bound verifier, single-use, then exchange + import."""
-    verifier = body.verifier
+def _complete_dl_callback(code: str, state: str, user_id: int) -> dict:
+    """Exchange a server-stored PKCE state exactly once and import documents."""
     with Session(engine) as s:
-        if body.state:
-            row = s.exec(select(OAuthState).where(
-                OAuthState.state == body.state,
-                OAuthState.user_id == user.id)).first()
-            if not row:
-                raise HTTPException(400, "unknown or foreign oauth state")
-            verifier = row.verifier
-            s.delete(row)
-            s.commit()
-        if not verifier:
-            raise HTTPException(400, "verifier required")
-    tokens = dg.exchange_code(body.code, verifier)
+        row = s.exec(select(OAuthState).where(
+            OAuthState.state == state, OAuthState.user_id == user_id)).first()
+        if not row:
+            raise HTTPException(400, "unknown, expired, or already-used oauth state")
+        verifier = row.verifier
+    tokens = dg.exchange_code(code, verifier)
     docs = dg.fetch_issued_docs(tokens["access_token"])
     kinds = set()
     with Session(engine) as s:
-        s.add(Consent(user_id=user.id, purpose="digilocker.documents.read",
+        current = s.get(OAuthState, row.id)
+        if not current:
+            raise HTTPException(400, "oauth state already used")
+        s.delete(current)
+        s.add(Consent(user_id=user_id, purpose="digilocker.documents.read",
                       scopes=dg.SCOPES))
         for d in docs.get("files", docs if isinstance(docs, list) else []):
             kind = dg.kind_from_doctype(d.get("doctype", d.get("name", "")))
             kinds.add(kind)
             if not s.exec(select(VaultItem).where(
-                    VaultItem.user_id == user.id,
+                    VaultItem.user_id == user_id,
                     VaultItem.reference == d.get("uri", ""))).first():
-                s.add(VaultItem(user_id=user.id, kind=kind,
+                s.add(VaultItem(user_id=user_id, kind=kind,
                                 label=d.get("name", kind),
                                 issuer=d.get("issuer", ""),
                                 reference=d.get("uri", "")))
         s.commit()
     return {"imported_kinds": sorted(kinds)}
+
+
+@app.get("/auth/digilocker/callback")
+def dl_callback_get(code: str, state: str):
+    """Browser redirect callback; the unpredictable state binds it to its user."""
+    with Session(engine) as s:
+        row = s.exec(select(OAuthState).where(OAuthState.state == state)).first()
+        if not row:
+            raise HTTPException(400, "unknown, expired, or already-used oauth state")
+        user_id = row.user_id
+    return _complete_dl_callback(code, state, user_id)
+
+
+@app.post("/auth/digilocker/callback")
+def dl_callback(body: DLCallback, user: User = Depends(current_user)):
+    """API callback for clients that receive the provider redirect themselves."""
+    if not body.state:
+        raise HTTPException(400, "state required")
+    return _complete_dl_callback(body.code, body.state, user.id)
 
 
 @app.get("/me/dashboard")
@@ -282,6 +331,8 @@ def get_map(slug: str, user: User = Depends(current_user)):
         m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
         if not m:
             raise HTTPException(404, "unknown map")
+        if not m.verified_at:
+            raise HTTPException(404, "map is not currently verified")
         return {"slug": m.slug, "title": m.title, "city": m.city,
                 "graph": json.loads(m.graph_json),
                 "sources": json.loads(m.source_urls), "verified": m.verified_at}
@@ -295,6 +346,12 @@ class DoneIn(BaseModel):
 @app.post("/me/progress")
 def mark_done(body: DoneIn, user: User = Depends(current_user)):
     with Session(engine) as s:
+        m = s.exec(select(TaskMap).where(TaskMap.slug == body.map_slug)).first()
+        if not m or not m.verified_at:
+            raise HTTPException(404, "unknown or unverified map")
+        node_ids = {n.get("id") for n in json.loads(m.graph_json).get("nodes", [])}
+        if body.step_id not in node_ids:
+            raise HTTPException(400, "unknown step for map")
         if not s.exec(select(Progress).where(
                 Progress.user_id == user.id, Progress.map_slug == body.map_slug,
                 Progress.step_id == body.step_id)).first():
@@ -302,6 +359,13 @@ def mark_done(body: DoneIn, user: User = Depends(current_user)):
                            step_id=body.step_id))
             s.commit()
     return {"ok": True}
+
+
+@app.get("/me/progress/{map_slug}")
+def get_progress(map_slug: str, user: User = Depends(current_user)):
+    with Session(engine) as s:
+        return {"steps": [p.step_id for p in s.exec(select(Progress).where(
+            Progress.user_id == user.id, Progress.map_slug == map_slug)).all()]}
 
 
 # ---------------- Per-user channel linking ----------------
@@ -405,6 +469,7 @@ def admin_build(body: BuildIn, admin: User = Depends(require_admin)):
     """Run scrape cascade + extraction now (slow: minutes). Saves UNVERIFIED map."""
     if not body.urls or len(body.urls) > 5:
         raise HTTPException(400, "1-5 urls required")
+    body.urls = [_validate_fetch_url(u) for u in body.urls]
     result = workermod.build_map(body.task, body.urls)
     with Session(engine) as s:
         m = s.exec(select(TaskMap).where(TaskMap.slug == body.slug)).first()
@@ -438,6 +503,7 @@ def job_build(body: BuildIn, bg: _BT, admin: User = Depends(require_admin)):
     """Enqueue build-map; poll GET /admin/jobs/{id}. Returns immediately."""
     if not body.urls or len(body.urls) > 5:
         raise HTTPException(400, "1-5 urls required")
+    body.urls = [_validate_fetch_url(u) for u in body.urls]
     with Session(engine) as s:
         j = Job(kind="build", created_by=admin.id,
                 payload=json.dumps({"task": body.task, "slug": body.slug,

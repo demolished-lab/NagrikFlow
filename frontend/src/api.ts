@@ -7,7 +7,7 @@ function headers(): Record<string, string> {
   return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) };
 }
 
-async function req(path: string, opts: RequestInit = {}) {
+export async function req(path: string, opts: RequestInit = {}) {
   const r = await fetch(API + path, { ...opts, headers: { ...headers(), ...(opts.headers || {}) } });
   if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail || r.statusText);
   return r.json();
@@ -21,5 +21,7 @@ export const api = {
   map: (slug: string) => req(`/maps/${slug}`),
   done: (map_slug: string, step_id: string) =>
     req('/me/progress', { method: 'POST', body: JSON.stringify({ map_slug, step_id }) }),
+  progress: (map_slug: string) => req(`/me/progress/${encodeURIComponent(map_slug)}`),
+  telegramLinkCode: () => req('/me/telegram/link-code', { method: 'POST' }),
   dlConnect: () => req('/auth/digilocker/connect'),
 };

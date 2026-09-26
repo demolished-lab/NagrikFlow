@@ -26,12 +26,13 @@ def test_no_default_secret_in_prod():
     import os
     import subprocess
     import sys
+    from pathlib import Path
     env = {k: v for k, v in os.environ.items()
            if k not in ("APP_SECRET", "APP_SECRET_PREV", "ALLOW_DEV_SECRET")}
     r = subprocess.run(
         [sys.executable, "-c",
          "import sys; sys.path.insert(0, '.'); from app import secrets"],
-        cwd=r"C:\Users\Raja\civic-pathfinder\backend",
+        cwd=Path(__file__).resolve().parents[1],
         capture_output=True, text=True, timeout=60, env=env)
     assert r.returncode != 0
     assert "APP_SECRET must be set" in (r.stderr + r.stdout)

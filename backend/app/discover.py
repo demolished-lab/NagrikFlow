@@ -18,7 +18,7 @@ GOV_HINTS = (".gov.in", ".nic.in", "gst.gov.in", "mca.gov.in")
 
 def _run(*args: str) -> dict:
     out = subprocess.run([*WIGOLO, *args, "--json"], capture_output=True,
-                         text=True, timeout=TIMEOUT, shell=True)
+                         text=True, timeout=TIMEOUT, shell=False, check=False)
     txt = (out.stdout or "").strip()
     try:
         return json.loads(txt[txt.index("{"):txt.rindex("}") + 1])

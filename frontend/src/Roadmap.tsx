@@ -22,7 +22,7 @@ function depths(nodes: GNode[], edges: string[][]): Record<string, number> {
   return d;
 }
 
-function layout(nodes: GNode[], edges: string[][]): { nodes: Node[]; edges: Edge[] } {
+function layout(nodes: GNode[], edges: string[][], completed: Set<string>): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: 70 });
   g.setDefaultEdgeLabel(() => ({}));
@@ -33,7 +33,7 @@ function layout(nodes: GNode[], edges: string[][]): { nodes: Node[]; edges: Edge
   return {
     nodes: nodes.map((n) => {
       const p = g.node(n.id);
-      const done = localStorage.getItem(`done-${n.id}`) === '1';
+      const done = completed.has(n.id);
       const band = DEPTH_COLORS[dep[n.id] % DEPTH_COLORS.length];
       return {
         id: n.id,
@@ -54,12 +54,15 @@ export default function Roadmap({ slug }: { slug: string }) {
   const [flow, setFlow] = useState<{ nodes: Node[]; edges: Edge[] }>({ nodes: [], edges: [] });
   const [sel, setSel] = useState<GNode | null>(null);
   const [all, setAll] = useState<GNode[]>([]);
+  const [completed, setCompleted] = useState<Set<string>>(new Set());
   const [err, setErr] = useState('');
 
   useEffect(() => {
-    api.map(slug).then((m) => {
+    Promise.all([api.map(slug), api.progress(slug)]).then(([m, p]) => {
+      const done = new Set<string>(p.steps || []);
+      setCompleted(done);
       setAll(m.graph.nodes);
-      setFlow(layout(m.graph.nodes, m.graph.edges));
+      setFlow(layout(m.graph.nodes, m.graph.edges, done));
     }).catch((e) => setErr(String(e.message || e)));
   }, [slug]);
 
@@ -94,7 +97,9 @@ export default function Roadmap({ slug }: { slug: string }) {
   const markDone = async () => {
     if (!sel) return;
     await api.done(slug, sel.id);
-    localStorage.setItem(`done-${sel.id}`, '1');
+    const done = new Set(completed);
+    done.add(sel.id);
+    setCompleted(done);
     setFlow((f) => ({
       ...f,
       nodes: f.nodes.map((n) =>

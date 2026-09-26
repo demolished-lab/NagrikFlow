@@ -51,7 +51,7 @@ npm run dev                                                         # in fronten
 ## Verify
 
 ```bash
-python -m pytest backend/tests/ -q        # 9 tests
+python -m pytest backend/tests/ -q        # 29 tests
 python backend/sim/run_sim.py             # 8-step life sim (mock world)
 python backend/sim/run_personas.py        # 20 personas, 20/20 sane
 ```

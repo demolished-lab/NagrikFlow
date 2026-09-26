@@ -1,30 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { STR, lang } from './i18n';
-
-const H = (t: string | null): Record<string, string> => ({
-  'Content-Type': 'application/json',
-  ...(t ? { Authorization: `Bearer ${t}` } : {}),
-});
+import { req } from './api';
 
 export default function Admin() {
   const t = STR[lang()];
-  const tok = localStorage.getItem('civic_token');
   const [maps, setMaps] = useState<any[]>([]);
   const [err, setErr] = useState('');
   const [form, setForm] = useState({ task: '', slug: '', urls: '' });
   const [building, setBuilding] = useState(false);
 
   const load = () =>
-    fetch('/api/admin/maps', { headers: H(tok) })
-      .then(async (r) => (r.ok ? setMaps(await r.json()) : setErr('Admin only (403). Is your account admin?')))
-      .catch((e) => setErr(String(e)));
+    req('/admin/maps').then((r) => setMaps(r))
+      .catch((e) => setErr(String(e.message || e)));
   useEffect(() => { load(); }, []);
 
   const verify = async (slug: string, v: boolean) => {
-    await fetch(`/api/admin/maps/${slug}/verify`, {
-      method: 'POST', headers: H(tok), body: JSON.stringify({ verified: v }),
-    });
-    load();
+    try {
+      await req(`/admin/maps/${encodeURIComponent(slug)}/verify`, {
+        method: 'POST', body: JSON.stringify({ verified: v }),
+      });
+      load();
+    } catch (e: any) { setErr(String(e.message || e)); }
   };
 
   const [checking, setChecking] = useState('');
@@ -32,7 +28,7 @@ export default function Admin() {
   const pollJob = async (id: number) => {
     for (let i = 0; i < 100; i++) {
       await new Promise((r) => setTimeout(r, 3000));
-      const j = await fetch(`/api/admin/jobs/${id}`, { headers: H(tok) }).then((x) => x.json());
+      const j = await req(`/admin/jobs/${id}`);
       if (j.status === 'done' || j.status === 'failed') return j;
     }
     return { status: 'timeout' };
@@ -42,9 +38,9 @@ export default function Admin() {
     setChecking(slug || 'all');
     setErr('');
     try {
-      const { job_id } = await fetch('/api/admin/jobs/recheck', {
-        method: 'POST', headers: H(tok), body: JSON.stringify({ slug }),
-      }).then((x) => x.json());
+      const { job_id } = await req('/admin/jobs/recheck', {
+        method: 'POST', body: JSON.stringify({ slug }),
+      });
       const j = await pollJob(job_id);
       const changed = ((j.result || {}).maps || []).filter((m: any) => m.changed);
       alert(j.status === 'failed' ? `Job failed: ${JSON.stringify(j.result)}`
@@ -59,13 +55,9 @@ export default function Admin() {
     setBuilding(true);
     setErr('');
     try {
-      const { job_id } = await fetch('/api/admin/jobs/build', {
-        method: 'POST', headers: H(tok),
+      const { job_id } = await req('/admin/jobs/build', {
+        method: 'POST',
         body: JSON.stringify({ ...form, urls: form.urls.split('\n').map((s) => s.trim()).filter(Boolean) }),
-      }).then(async (r) => {
-        const j = await r.json();
-        if (!r.ok) throw new Error(j.detail || 'build failed');
-        return j;
       });
       const j = await pollJob(job_id);
       if (j.status === 'failed') throw new Error(JSON.stringify(j.result));

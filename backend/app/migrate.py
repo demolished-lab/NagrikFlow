@@ -4,6 +4,7 @@ Each migration is a function taking (engine). Applied versions tracked in
 schema_version table. Runs at startup, in order. SQLite + Postgres compatible
 (SQLAlchemy DDL only). New schema change = append new function + list entry.
 """
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlmodel import Field, Session, SQLModel, create_engine, select
@@ -54,7 +55,8 @@ def m002_seed_udyam(engine):
             d = json.loads(seed.read_text())
             s.add(TaskMap(slug=d["slug"], title=d["title"], city=d["city"],
                           graph_json=json.dumps({"nodes": d["nodes"], "edges": d["edges"]}),
-                          source_urls=json.dumps(d["source_urls"])))
+                          source_urls=json.dumps(d["source_urls"]),
+                          verified_at=datetime.now(timezone.utc)))
             s.commit()
 
 
@@ -70,11 +72,6 @@ def m004_oauth_state(engine):
 
 
 MIGRATIONS = [m001_base, m002_seed_udyam, m003_security_jobs, m004_oauth_state]
-
-
-def m004_oauth_state(engine):
-    """OAuthState table on already-migrated DBs (fresh DBs get it via m001)."""
-    SQLModel.metadata.create_all(engine)  # checkfirst: new tables only
 
 
 def migrate(engine):

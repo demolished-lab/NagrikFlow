@@ -16,7 +16,7 @@ TTL = int(os.environ.get("SESSION_TTL_SECONDS", "7200"))
 
 if not SECRET:
     if ALLOW_DEV:
-        SECRET = "dev-only-insecure"
+        SECRET = "dev-only-insecure-development-key-32"
     else:
         raise RuntimeError("APP_SECRET must be set (ALLOW_DEV_SECRET=1 for local dev only)")
 

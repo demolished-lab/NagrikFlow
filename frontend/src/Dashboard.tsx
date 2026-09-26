@@ -46,11 +46,12 @@ function ConnectTelegram() {
       <h3>🔔 {t.tgTitle}</h3>
       <p><small>{t.tgBody}</small></p>
       <button onClick={async () => {
-        const r = await fetch('/api/me/telegram/link-code', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${localStorage.getItem('civic_token')}` },
-        }).then((x) => x.json());
-        setCode(r.code || '');
+        try {
+          const r = await api.telegramLinkCode();
+          setCode(r.code || '');
+        } catch (e: any) {
+          setCode(String(e.message || e));
+        }
       }}>{t.tgBtn}</button>
       {code && <p>Send <b>/start {code}</b> {t.tgSend}</p>}
     </div>

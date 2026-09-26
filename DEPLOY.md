@@ -16,9 +16,11 @@
 - Changed maps auto-unverify + alert linked Telegram chats.
 
 ## Env checklist (backend/.env — never commit)
-APP_SECRET, ADMIN_EMAILS, DIGILOCKER_CLIENT_ID/SECRET (+ENV=production after
-approval), TELEGRAM_BOT_TOKEN, BYNARA_API_KEY (done), RESEND_API_KEY or SMTP_*
-for mail, VITE_API_URL on the frontend side.
+APP_SECRET, ADMIN_EMAILS, FRONTEND_ORIGINS, DIGILOCKER_REDIRECT_URI,
+DIGILOCKER_CLIENT_ID/SECRET (+ENV=production after approval), TELEGRAM_BOT_TOKEN,
+BYNARA_API_KEY (done), RESEND_API_KEY or SMTP_* for mail, VITE_API_URL on the
+frontend side. `DIGILOCKER_REDIRECT_URI` must be the public backend callback URL
+(`https://<backend>/auth/digilocker/callback`).
 
 ## Production upgrades (when usage grows)
 SQLite → Neon/Supabase Postgres (SQLModel needs only DATABASE_URL change);

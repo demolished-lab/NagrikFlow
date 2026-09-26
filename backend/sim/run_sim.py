@@ -8,10 +8,15 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
 
-sys.path.insert(0, r"C:\Users\Raja\civic-pathfinder\backend")
-os.chdir(r"C:\Users\Raja\civic-pathfinder\backend")
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+SIM_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BACKEND_DIR))
+os.chdir(BACKEND_DIR)
 os.environ["DATABASE_URL"] = "sqlite:///./t_sim.db"
+os.environ["ALLOW_DEV_SECRET"] = "1"
+os.environ["CIVIC_DEV"] = "1"
 os.environ["DIGILOCKER_API_BASE"] = "http://localhost:8001"
 os.environ["DIGILOCKER_SSO_BASE"] = "http://localhost:8001/sso"
 for f in ("t_sim.db",):
@@ -33,7 +38,7 @@ import functools  # noqa: E402
 import http.server  # noqa: E402
 
 handler = functools.partial(http.server.SimpleHTTPRequestHandler,
-                            directory=r"C:\Users\Raja\civic-pathfinder\backend\sim")
+                            directory=str(SIM_DIR))
 threading.Thread(target=http.server.HTTPServer(
     ("localhost", 8003), handler).serve_forever, daemon=True).start()
 time.sleep(3)
@@ -51,8 +56,9 @@ assert "token" in rani, rani
 print("   user_id:", rani["user_id"])
 
 print("2. DigiLocker consent callback (mock code)")
+connect = c.get("/auth/digilocker/connect", headers=H).json()
 imp = c.post("/auth/digilocker/callback", headers=H,
-             json={"code": "mock-code", "verifier": "mock-verifier"}).json()
+             json={"code": "mock-code", "state": connect["state"]}).json()
 print("   imported:", imp["imported_kinds"])
 assert {"aadhaar", "pan", "udyam"} <= set(imp["imported_kinds"]), imp
 
