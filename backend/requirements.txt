@@ -13,4 +13,5 @@ python-dotenv>=1.0  # Load .env files
 # APIs). Not reachable: crawl4ai only calls nltk with hardcoded corpus paths
 # (nltk.data.find("tokenizers/punkt"), sent_tokenize, word_tokenize) - no
 # caller-controlled path. No fixed release exists (3.10.3 is latest on PyPI);
-# re-run `python -m pip_audit` when nltk > 3.10.3 appears.
+# tracked as an explicit --ignore-vuln exception in the CI deps job
+# (.github/workflows/ci.yml) so NEW advisories still fail the build.

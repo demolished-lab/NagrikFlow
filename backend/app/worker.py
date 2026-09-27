@@ -7,8 +7,10 @@ regex fallback keeps the pipeline working with zero LLM.
 Every field keeps source_url + fetched_at. No proof link = dropped.
 """
 import html
+import ipaddress
 import os
 import re
+import socket
 import subprocess
 import urllib.error
 import urllib.request
@@ -141,19 +143,63 @@ def page_has_link(link: str, text: str) -> bool:
 
 def probe_link(link: str, timeout: float = 4.0):
     """Reachability probe: True = server answers, False = provably dead
-    (404/410), None = indeterminate (DNS/timeout/WAF) -> link is kept."""
+    (404/410) or unsafe target, None = indeterminate (DNS/timeout/WAF)."""
     if os.environ.get("LINK_PROBE", "1") == "0":
         return None
+    ok = _probe_target_ok(link)
+    if ok is False:
+        return False  # private/internal address: never fetched
+    if ok is None:
+        return None  # DNS failure -> indeterminate, link kept
+    opener = urllib.request.build_opener(_GuardedRedirect)
     req = urllib.request.Request(link, method="HEAD", headers={"User-Agent": UA})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with opener.open(req, timeout=timeout) as resp:
             return resp.status not in (404, 410)
+    except _BadRedirect:
+        return False
     except urllib.error.HTTPError as e:
         if e.code in (404, 410):
             return False
         return True  # server answered (incl. 403/405 bot-walls, 5xx)
     except Exception:
         return None
+
+
+def _probe_target_ok(url: str):
+    """True = host resolves to public IPs only, False = private/loopback/
+    link-local target (blocked, never fetched), None = DNS failure."""
+    host = urlparse(url).hostname
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return None
+    if not infos:
+        return None
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if not ip.is_global:
+            return False
+    return True
+
+
+class _BadRedirect(Exception):
+    """Redirect target failed the public-address guard."""
+
+
+class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only to public addresses (SSRF guard: a gov page
+    must not be able to bounce the probe onto 169.254.169.254/RFC1918)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if _probe_target_ok(newurl) is not True:
+            raise _BadRedirect(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def verify_links(nodes: list[dict]) -> None:

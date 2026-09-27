@@ -182,16 +182,23 @@ def test_probe_link_drops_dead_and_keeps_indeterminate(monkeypatch):
     from app import worker as W
 
     monkeypatch.setenv("LINK_PROBE", "1")
+    monkeypatch.setattr(W, "_probe_target_ok", lambda url: True)
 
-    def dead(link, *a, **k):
-        raise urllib.error.HTTPError(link, 404, "Not Found", {}, None)
-    monkeypatch.setattr(urllib.request, "urlopen", dead)
+    class Dead:
+        def open(self, *a, **k):
+            raise urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *a: Dead())
     assert W.probe_link("https://dept.gov.in/gone") is False
 
-    def offline(link, *a, **k):
-        raise OSError("offline")
-    monkeypatch.setattr(urllib.request, "urlopen", offline)
+    class Offline:
+        def open(self, *a, **k):
+            raise OSError("offline")
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *a: Offline())
     assert W.probe_link("https://dept.gov.in/x") is None
+
+    # private/internal target -> dropped, no request is ever made
+    monkeypatch.setattr(W, "_probe_target_ok", lambda url: False)
+    assert W.probe_link("http://dept.gov.in/redirect-to-lan") is False
 
     monkeypatch.setattr(W, "probe_link",
                         lambda link, timeout=4.0: False if "gone" in link else None)
@@ -205,6 +212,41 @@ def test_probe_link_drops_dead_and_keeps_indeterminate(monkeypatch):
 
     monkeypatch.setenv("LINK_PROBE", "0")
     assert W.probe_link("https://dept.gov.in/any") is None
+
+
+def test_probe_target_rejects_private_and_dns_failures(monkeypatch):
+    import socket
+    from app import worker as W
+
+    def fake_gaip(ip_value):
+        def _gai(host, *a, **k):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip_value, 0))]
+        return _gai
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_gaip("10.0.0.5"))
+    assert W._probe_target_ok("https://dept.gov.in/x") is False
+    monkeypatch.setattr(socket, "getaddrinfo", fake_gaip("169.254.169.254"))
+    assert W._probe_target_ok("https://dept.gov.in/x") is False
+    monkeypatch.setattr(socket, "getaddrinfo", fake_gaip("127.0.0.1"))
+    assert W._probe_target_ok("https://dept.gov.in/x") is False
+    monkeypatch.setattr(socket, "getaddrinfo", fake_gaip("93.184.216.34"))
+    assert W._probe_target_ok("https://dept.gov.in/x") is True
+
+    def nxdomain(host, *a, **k):
+        raise OSError("nxdomain")
+    monkeypatch.setattr(socket, "getaddrinfo", nxdomain)
+    assert W._probe_target_ok("https://dept.gov.in/x") is None
+
+
+def test_redirect_guard_blocks_internal_redirects(monkeypatch):
+    import pytest
+    from app import worker as W
+
+    monkeypatch.setattr(W, "_probe_target_ok", lambda url: False)
+    handler = W._GuardedRedirect()
+    with pytest.raises(W._BadRedirect):
+        handler.redirect_request(None, None, 302, "Found", {},
+                                 "http://169.254.169.254/latest/meta-data/")
 
 
 def test_build_map_nodes_carry_link(monkeypatch):
