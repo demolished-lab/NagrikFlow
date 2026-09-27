@@ -107,6 +107,22 @@ test('register shortcut opens account registration mode', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Register' }).last()).toBeVisible();
 });
 
+test('login and registration share the concierge shell and fit a mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Login' }).first().click();
+  await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Official service links' })).toBeVisible();
+  await expect(page.locator('.cv-auth-shell')).toHaveCount(1);
+  const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, page: document.documentElement.scrollWidth }));
+  expect(dimensions.page).toBeLessThanOrEqual(dimensions.viewport);
+  await page.getByRole('button', { name: 'Back to services' }).click();
+  await expect(page.getByRole('heading', { name: 'What do you need to get done?' })).toBeVisible();
+  await page.getByRole('button', { name: 'Register' }).first().click();
+  await expect(page.getByRole('heading', { name: 'A clearer path starts here.' })).toBeVisible();
+  await expect(page.getByLabel('City')).toBeVisible();
+});
+
 test('user can authenticate and reach the personalized concierge home', async ({ page }) => {
   await page.route('**/api/auth/login', async (route) => {
     await route.fulfill({ json: { token: 'e2e-auth-token', user_id: 7 } });

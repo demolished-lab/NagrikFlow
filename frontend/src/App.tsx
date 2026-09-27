@@ -105,7 +105,7 @@ export default function App() {
   };
 
   if (authState === 'landing') return <LandingPage onLogin={() => setAuthState('login')} onRegister={() => setAuthState('register')} />;
-  if (authState === 'login' || authState === 'register') return <LoginPanel key={authState} initialMode={authState === 'register' ? 'register' : 'login'} onLogin={onLogin} />;
+  if (authState === 'login' || authState === 'register') return <LoginPanel key={authState} initialMode={authState === 'register' ? 'register' : 'login'} onLogin={onLogin} onBack={() => setAuthState('landing')} />;
 
   const profileName = profile?.name || profile?.email?.split('@')[0] || 'Your account';
   const initials = profileName.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') || 'C';
