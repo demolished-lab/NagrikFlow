@@ -17,6 +17,7 @@ from sqlalchemy import text as sqltext
 from sqlmodel import Session, select
 
 from .models import Job, TaskMap
+from .obs import warn
 
 STALE_SECONDS = int(os.environ.get("JOB_STALE_SECONDS", "3600"))
 RECOVER_MAX_AGE_HOURS = int(os.environ.get("JOB_RECOVER_MAX_AGE_HOURS", "24"))
@@ -24,6 +25,11 @@ LEASE_SECONDS = int(os.environ.get("JOB_LEASE_SECONDS", "1800"))
 
 # Identity of this process's job claims (lease owner field, diagnostics).
 _WORKER_ID = f"{os.getpid()}-{os.urandom(4).hex()}"
+
+# Poller health, surfaced at /readyz — a dead poller means queued builds
+# never run, and that must never be invisible.
+POLLER_STATUS: dict = {"started": False, "disabled": False,
+                       "last_ok_at": "", "last_error": ""}
 
 _active_guard = threading.Lock()
 _active_slugs: dict[str, threading.Lock] = {}
@@ -163,9 +169,14 @@ def start_poller(engine, interval: float = 2.0) -> None:
             time.sleep(interval)
             try:
                 poll_once(engine)
-            except Exception:
-                pass
+                POLLER_STATUS["last_ok_at"] = datetime.now(
+                    timezone.utc).isoformat()
+                POLLER_STATUS["last_error"] = ""
+            except Exception as e:
+                POLLER_STATUS["last_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+                warn("jobs", "job poller iteration failed", error=e)
 
+    POLLER_STATUS["started"] = True
     threading.Thread(target=_loop, name="job-poller", daemon=True).start()
 
 

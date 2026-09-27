@@ -19,6 +19,7 @@ type MapPayload = {
   service_type?: string;
   verified?: boolean;
   edge_sources?: Record<string, string>;
+  warnings?: string[];
 };
 
 type Props = { slug: string; onBack: () => void };
@@ -34,6 +35,7 @@ type Packet = {
   guides: PacketGuide[];
   sources: { url: string; ok?: boolean; final_url?: string; tier?: string; guides?: PacketGuide[] }[];
   counts: { steps: number; documents: number; sources: number; guides: number };
+  warnings?: string[];
 };
 
 const STATUS_CONFIG: Record<Status, { color: string; bg: string; badge: string; icon: string }> = {
@@ -218,6 +220,7 @@ export default function Roadmap({ slug, onBack }: Props) {
         <div className="cv-view-toggle" role="group" aria-label="Pathway display mode"><button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>☷ List</button><button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}>⌘ Map</button></div>
       </div>
       {!payload.verified && <div className="cv-review-banner" role="note"><span aria-hidden="true">i</span><p><strong>This pathway is awaiting source review.</strong> You can inspect its steps and official links; progress tracking will be available after an administrator approves it.</p></div>}
+      {!!payload.warnings?.length && <div className="cv-review-banner cv-source-warnings" role="note"><span aria-hidden="true">!</span><p><strong>Some sources for this pathway need your attention.</strong> {payload.warnings.join(' ')}</p></div>}
       {payload.verified && <p className="cv-roadmap-progress-note">Your progress is saved to your account when you mark a step complete.</p>}
       <div className="cv-filter-row"><label className="cv-filter-search"><span aria-hidden="true">⌕</span><input value={filters.q} onChange={(event) => updateFilter('q', event.target.value)} placeholder="Search steps, documents or fees" aria-label="Search pathway steps" /></label><select value={filters.node_type} onChange={(event) => updateFilter('node_type', event.target.value)} aria-label="Filter by step type"><option value="">All step types</option>{(payload.filters?.types || []).map((type) => <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>)}</select><select value={filters.status} onChange={(event) => updateFilter('status', event.target.value)} aria-label="Filter by status"><option value="">All statuses</option>{(payload.filters?.statuses || []).map((status) => <option key={status} value={status}>{STATUS_CONFIG[status as Status]?.badge || status}</option>)}</select><button className="cv-filter-reset" onClick={resetFilters}>Reset</button></div>
       <div className="cv-filter-summary" aria-live="polite">{loading ? 'Refreshing steps…' : `${payload.graph.nodes.length} visible steps`}{(filters.q || filters.node_type || filters.status) && <span> · Filters are synced with the API</span>}</div>
@@ -236,6 +239,7 @@ export default function Roadmap({ slug, onBack }: Props) {
       {packetBusy && <p role="status">Building your packet from the fetched sources…</p>}
       {packetErr && <div className="cv-api-error" role="alert">{packetErr}</div>}
       {packet && <div className="cv-packet-body">
+        {!!packet.warnings?.length && <div className="cv-review-banner cv-source-warnings" role="note"><span aria-hidden="true">!</span><p><strong>Source warnings for this packet.</strong> {packet.warnings.join(' ')}</p></div>}
         <p className="cv-muted">{packet.counts.steps} steps · {packet.counts.documents} documents · {packet.counts.sources} sources · {packet.counts.guides} guides · generated {new Date(packet.generated_at).toLocaleString()}</p>
         {packet.checklist.length > 0 && <div><h3>Document checklist</h3><ul>{packet.checklist.map((doc) => <li key={doc}>{doc}</li>)}</ul></div>}
         {packet.guides.length > 0 && <div><h3>Official guides</h3><ul>{packet.guides.map((guide) => <li key={guide.url}><a href={guide.url} target="_blank" rel="noreferrer">{guide.title || guide.url} ↗</a></li>)}</ul></div>}

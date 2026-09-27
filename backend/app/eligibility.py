@@ -63,7 +63,9 @@ def personalize(vault_kinds: set[str], progress: dict,
     for it in items or []:
         try:
             meta = _json.loads(it.get("meta") or "{}")
-        except Exception:
+        except Exception as e:
+            from .obs import warn
+            warn("eligibility", "corrupt item meta skipped", error=e)
             continue
         if meta.get("date"):
             try:

@@ -178,6 +178,12 @@ _try_add_pg_migrations(MIGRATIONS)
 
 def migrate(engine):
     SchemaVersion.__table__.create(engine, checkfirst=True)
+    # Safety net FIRST: pending migrations may ORM-SELECT columns that an
+    # older DB's tables predate (e.g. m007's select(TaskMap) needs
+    # taskmap.created_by, absent on DBs whose versions stop at 1-6 — that
+    # crashed boot before the trailing _ensure_columns ever ran). Idempotent,
+    # and safe on brand-new DBs: missing-table inspects are caught inside.
+    _ensure_columns(engine)
     with Session(engine) as s:
         applied = {r.version for r in s.exec(select(SchemaVersion)).all()}
         for i, fn in enumerate(MIGRATIONS, start=1):
@@ -185,6 +191,5 @@ def migrate(engine):
                 fn(engine)
                 s.add(SchemaVersion(version=i))
                 s.commit()
-    # Idempotent column safety net (service_type etc.) on every boot, so a
-    # version-index shift can never skip an ALTER on an existing DB.
+    # And again after: migrations that create tables may want fresh columns.
     _ensure_columns(engine)

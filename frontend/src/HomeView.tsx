@@ -128,6 +128,7 @@ export default function HomeView({ profile, onNavigate }: Props) {
       const slug = String(response.slug || '');
       setBuild({ status: 'building', slug, task: cleanTask, jobId });
       let attempts = 0;
+      let softTimedOut = false;
       const check = async () => {
         if (checkingRef.current) return;
         checkingRef.current = true;
@@ -148,8 +149,14 @@ export default function HomeView({ profile, onNavigate }: Props) {
             const verified = Boolean(map?.verified || pathway?.verified);
             setBuild({ status: verified ? 'verified' : 'review_required', slug: resultSlug, task: cleanTask, jobId, pathway });
             window.dispatchEvent(new Event('civic:pathways-updated'));
-          } else if (attempts >= 90) {
+          } else if (attempts >= 300) {
             if (pollRef.current !== null) window.clearInterval(pollRef.current);
+            setBuild({ status: 'timeout', slug, task: cleanTask, jobId, error: 'This is taking longer than expected. The job may still finish; check My pathways in a moment.' });
+            void loadPathways();
+          } else if (attempts >= 90 && !softTimedOut) {
+            // soft timeout: warn the citizen but KEEP polling — builds
+            // routinely take 4-5 min and must auto-flip to the ready banner
+            softTimedOut = true;
             setBuild({ status: 'timeout', slug, task: cleanTask, jobId, error: 'This is taking longer than expected. The job may still finish; check My pathways in a moment.' });
             void loadPathways();
           }

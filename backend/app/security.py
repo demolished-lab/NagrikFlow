@@ -12,6 +12,8 @@ import time
 from collections import deque
 
 from fastapi import HTTPException, Request
+
+from .obs import warn
 from fastapi.responses import JSONResponse
 
 # prefix -> (max_hits, window_seconds)
@@ -71,7 +73,9 @@ def _get_store():
                 client = get_client()
                 _store = RedisStore(client, fallback=MemoryStore()) \
                     if client else MemoryStore()
-            except Exception:
+            except Exception as e:
+                warn("security", "redis store init failed, "
+                     "using in-process memory store", error=e)
                 _store = MemoryStore()
         else:
             _store = MemoryStore()

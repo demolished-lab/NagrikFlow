@@ -29,14 +29,25 @@ async def edge_middleware(request, call_next):
 
 
 def install(app):
+    from fastapi import HTTPException as FHTTPException
     from fastapi.responses import JSONResponse as JR
 
     @app.exception_handler(404)
     async def _404(request, exc):
-        return JR({"detail": "not found"}, 404)
+        # keep the specific reason ("unknown or unverified map", ...) so the
+        # citizen sees WHY; only the bare router 404 normalises to "not found"
+        detail = getattr(exc, "detail", None)
+        if not isinstance(detail, str) or not detail.strip() or detail == "Not Found":
+            detail = "not found"
+        return JR({"detail": detail}, 404,
+                  headers=getattr(exc, "headers", None))
 
     @app.exception_handler(500)
     async def _500(request, exc):
-        return JR({"detail": "internal error (logged)"}, 500)
+        if isinstance(exc, FHTTPException) and isinstance(exc.detail, str) and exc.detail:
+            return JR({"detail": exc.detail}, 500)
+        # name the failure class so logs and users point at the same cause
+        return JR({"detail": "internal error (logged)",
+                   "error": type(exc).__name__}, 500)
 
     app.middleware("http")(edge_middleware)

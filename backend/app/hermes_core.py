@@ -120,11 +120,24 @@ Return JSON: {{\"steps\": [...], \"risks\": [...], \"estimated_turns\": N}}"""
     
     try:
         response, _ = llm_complete(plan_prompt, role="extract")
+    except Exception as e:
+        from .obs import warn
+        warn("hermes", "plan generation failed, using default plan", error=e)
+        response = ""
+    if response:
         m = re.search(r'\{.*\}', response, re.DOTALL)
         if m:
-            return json.loads(m.group(0))
-    except Exception:
-        pass
+            try:
+                parsed = json.loads(m.group(0))
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception as e:
+                from .obs import warn
+                warn("hermes", "unparseable plan reply, using default plan",
+                     error=e)
+        else:
+            from .obs import warn
+            warn("hermes", "plan reply contained no JSON, using default plan")
     
     return {"steps": ["Understand task", "Read relevant files", "Make changes", "Verify"], "risks": [], "estimated_turns": 5}
 

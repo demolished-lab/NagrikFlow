@@ -36,7 +36,10 @@ export default function Dashboard() {
       .then((pathwayData: PathwaySummary[]) => {
         const list = pathwayData || [];
         setPathways(list);
-        const first = list.find((p) => p.slug && p.status !== 'failed');
+        const usable = list.filter((p) => p.slug && p.status !== 'failed');
+        // track a reviewed pathway when one exists — drafts have no
+        // milestones yet (they unlock after source review)
+        const first = usable.find((p) => p.verified) || usable[0];
         if (first) setSlug(first.slug);
         setSlugChosen(true);
       })
@@ -49,8 +52,13 @@ export default function Dashboard() {
   useEffect(() => {
     if (!slugChosen || !slug) return;
     setMapErr('');
-    Promise.all([api.map(slug), api.progress(slug), api.milestones(slug)])
-      .then(([mapData, progressData, milestoneData]) => {
+    Promise.all([api.map(slug), api.progress(slug)])
+      .then(async ([mapData, progressData]) => {
+        // drafts: milestones don't exist yet — don't fire a request that
+        // can only 404 (the review banner explains the tracking gate)
+        const milestoneData = mapData.verified
+          ? await api.milestones(slug)
+          : { milestones: [] as any[] };
         setMap(mapData);
         setCompleted(progressData.steps || []);
         setMilestones(milestoneData.milestones || []);

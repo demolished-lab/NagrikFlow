@@ -51,6 +51,9 @@ def _mock_pipeline(monkeypatch, infer=None):
     def fake_llm_extract(text, url, task):
         return [dict(s, url=url) for s in SOURCE_STEPS.get(url, [])]
 
+    def fake_llm_extract_full(text, url, task):
+        return fake_llm_extract(text, url, task), "llm", ""
+
     # build_map uses cascade_fetch_full (text, tier, final_url); keep the
     # legacy name patched too for tests that call cascade_fetch directly
     monkeypatch.setattr(W, "cascade_fetch_full",
@@ -58,6 +61,8 @@ def _mock_pipeline(monkeypatch, infer=None):
     monkeypatch.setattr(W, "cascade_fetch",
                         lambda url: (f"page content for {url}", "trafilatura"))
     monkeypatch.setattr(W, "llm_extract", fake_llm_extract)
+    # build_map reads the lane-aware seam (steps, lane, error)
+    monkeypatch.setattr(W, "_llm_extract_full", fake_llm_extract_full)
     if infer is not None:
         monkeypatch.setattr(W, "llm_infer_edges", lambda task, nodes: infer)
     else:
@@ -103,6 +108,8 @@ def test_build_map_merges_duplicate_steps(monkeypatch):
         return [dict(s, url=url) for s in dup[url]]
 
     monkeypatch.setattr(W, "llm_extract", fake_extract)
+    monkeypatch.setattr(W, "_llm_extract_full",
+                        lambda t, u, k: (fake_extract(t, u, k), "llm", ""))
     result = W.build_map("task", list(dup))
     assert len(result["nodes"]) == 1
     node = result["nodes"][0]
@@ -169,7 +176,8 @@ def test_llm_links_are_hallucination_proof(monkeypatch):
         {"id": "d", "type": "action", "title": "Other form", "detail": "x",
          "fee": "", "link": "https://dept.gov.in/forms/never-mentioned"},
     ])
-    monkeypatch.setattr(llmmod, "_chat_raw", lambda prompt: (raw, "model"))
+    monkeypatch.setattr(llmmod, "_chat_raw",
+                        lambda prompt, max_tokens=400: (raw, "model"))
     text = "Pay the fee online at https://dept.gov.in/pay within 7 days."
     steps = W.llm_extract(text, "https://dept.gov.in/page", "task")
     links = {s["id"]: s["link"] for s in steps}
@@ -262,6 +270,10 @@ def test_build_map_nodes_carry_link(monkeypatch):
         {"id": "apply", "type": "action", "title": "Apply online", "detail": "",
          "fee": "", "url": url, "link": "https://dept.gov.in/forms/apply-1"},
     ])
+    monkeypatch.setattr(W, "_llm_extract_full", lambda text, url, task: (
+        [{"id": "apply", "type": "action", "title": "Apply online", "detail": "",
+          "fee": "", "url": url, "link": "https://dept.gov.in/forms/apply-1"}],
+        "llm", ""))
     result = W.build_map("task", ["https://dept.gov.in/page"])
     assert result["nodes"][0]["link"] == "https://dept.gov.in/forms/apply-1"
 

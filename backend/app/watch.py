@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from sqlmodel import Session, select
 
 from . import worker as workermod
+from .obs import warn
 from .models import Progress, TaskMap, User
 
 
@@ -64,13 +65,20 @@ def recheck(engine, slug: str | None = None) -> list[dict]:
                     select(Progress).where(Progress.map_slug == m.slug)).all()}
                 try:
                     from . import alerts as alertsmod
-                    for uid in users:
-                        u = s.get(User, uid)
-                        if u and u.telegram_chat:
-                            alertsmod.portal_changed(u.telegram_chat, m.title, m.slug)
-                            alerted += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    alertsmod = None
+                    warn("watch", "alerts module unavailable, "
+                         "change notice not sent", error=e)
+                for uid in users:
+                    u = s.get(User, uid)
+                    if not (u and u.telegram_chat):
+                        continue
+                    try:
+                        alertsmod.portal_changed(u.telegram_chat, m.title, m.slug)
+                        alerted += 1
+                    except Exception as e:
+                        warn("watch", "change alert send failed",
+                             slug=m.slug, user_id=uid, error=e)
             out.append({"slug": m.slug, "changed": changed, "note": note,
                         "hash": new_hash, "alerted": alerted,
                         "sources": statuses})

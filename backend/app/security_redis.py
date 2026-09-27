@@ -26,7 +26,10 @@ def get_client():
         _client = redis.from_url(url, socket_connect_timeout=2, socket_timeout=2)
         _client.ping()
         return _client
-    except Exception:
+    except Exception as e:
+        from .obs import warn
+        warn("security", "redis client unavailable, "
+             "rate limits stay per-process", error=e)
         _client_failed = True
         return None
 

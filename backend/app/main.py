@@ -144,16 +144,22 @@ def _init_db():
         try:
             from . import jobs as jobsmod
             jobsmod.recover_orphans(engine)  # restart recovery for queued/running jobs
-        except Exception:
-            pass
+        except Exception as e:
+            obsmod.warn("jobs", "startup job recovery failed", error=e)
+    from . import jobs as _jobsmod
     if os.environ.get("JOB_POLLER", "1") != "0":
         # picks up queued rows + expired leases across worker processes;
         # claim() inside each runner keeps exactly-once execution
         try:
-            from . import jobs as jobsmod
-            jobsmod.start_poller(engine)
-        except Exception:
-            pass
+            _jobsmod.start_poller(engine)
+        except Exception as e:
+            _jobsmod.POLLER_STATUS["last_error"] = \
+                f"start failed: {type(e).__name__}: {str(e)[:200]}"
+            obsmod.warn("jobs",
+                        "job poller failed to start - queued jobs will not run",
+                        error=e)
+    else:
+        _jobsmod.POLLER_STATUS["disabled"] = True
 
 
 _init_db()
@@ -193,6 +199,19 @@ def readyz():
             client = srmod.get_client()
         checks["redis"] = "ok" if client is not None else "fail"
         ok = ok and client is not None
+    # Job poller: a dead poller means queued builds never run - surface it.
+    from . import jobs as jobsmod
+    ps = jobsmod.POLLER_STATUS
+    if ps.get("disabled"):
+        checks["job_poller"] = "disabled"
+    elif ps.get("last_error"):
+        checks["job_poller"] = f"fail: {ps['last_error']}"
+        ok = False
+    elif not ps.get("started"):
+        checks["job_poller"] = "fail: not started"
+        ok = False
+    else:
+        checks["job_poller"] = "ok"
     from fastapi.responses import JSONResponse
     return JSONResponse({"ok": ok, "checks": checks}, 200 if ok else 503)
 
@@ -282,8 +301,12 @@ def otp_request(body: OtpReq):
             subj, text = notifmod.otp_message(code)
             try:
                 notifmod.send(u.email, subj, text)
-            except Exception:
-                pass
+            except Exception as e:
+                obsmod.warn("notify", "OTP email send failed",
+                            user_id=u.id, error=e)
+                raise HTTPException(
+                    502, "the login code could not be sent right now "
+                         "- please try again in a moment")
     return {"ok": True}
 
 
@@ -534,10 +557,13 @@ def get_map(
         "statuses": sorted({node_status(node) for node in all_nodes}),
         "total": len(all_nodes),
     }
+    from . import packet as packetmod
+    map_sources = json.loads(m.source_urls)
     return {"slug": m.slug, "title": m.title, "city": m.city, "state": m.state,
             "service_type": m.service_type,
             "graph": {"nodes": filtered_nodes, "edges": filtered_edges},
-            "filters": filter_options, "sources": json.loads(m.source_urls),
+            "filters": filter_options, "sources": map_sources,
+            "warnings": packetmod.source_warnings(map_sources),
             "verified": bool(m.verified_at),
             "edge_sources": json.loads(m.edge_sources) if m.edge_sources else {}}
 
@@ -551,8 +577,14 @@ class DoneIn(BaseModel):
 def mark_done(body: DoneIn, user: User = Depends(current_user)):
     with Session(engine) as s:
         m = s.exec(select(TaskMap).where(TaskMap.slug == body.map_slug)).first()
-        if not m or not m.verified_at:
-            raise HTTPException(404, "unknown or unverified map")
+        if not m:
+            raise HTTPException(404, "unknown map")
+        if not m.verified_at:
+            if m.created_by == user.id or user.is_admin:
+                raise HTTPException(409, "this pathway is awaiting source "
+                                         "review - progress tracking unlocks "
+                                         "after an administrator approves it")
+            raise HTTPException(404, "unknown map")  # existence hidden from others
         node_ids = {n.get("id") for n in json.loads(m.graph_json).get("nodes", [])}
         if body.step_id not in node_ids:
             raise HTTPException(400, "unknown step for map")
@@ -616,6 +648,40 @@ def _ensure_milestones(user: User, map_slug: str) -> list[dict]:
         } for row in sorted(by_step.values(), key=lambda item: item.due_at)]
 
 
+def _user_verified_map_slugs(s: Session, user: User) -> list[str]:
+    """Verified maps this citizen is engaged with (build jobs, milestones,
+    progress). Notifications and the PDF report aggregate across these
+    instead of one hard-coded slug that breaks whenever that map is absent
+    or awaiting source review."""
+    slugs: list[str] = []
+
+    def _add(slug) -> None:
+        if isinstance(slug, str) and slug and slug not in slugs:
+            slugs.append(slug)
+
+    jobs = s.exec(select(Job).where(
+        Job.created_by == user.id, Job.kind == "build"
+    ).order_by(Job.created_at.desc()).limit(50)).all()
+    for job in jobs:
+        try:
+            result_data = json.loads(job.result or "{}")
+            request_data = json.loads(job.payload or "{}")
+        except (TypeError, json.JSONDecodeError):
+            result_data, request_data = {}, {}
+        _add(result_data.get("slug") or request_data.get("slug"))
+    for row in s.exec(select(RoadmapMilestone.map_slug).where(
+            RoadmapMilestone.user_id == user.id).distinct()).all():
+        _add(row[0] if isinstance(row, (tuple, list)) else row)
+    for row in s.exec(select(Progress.map_slug).where(
+            Progress.user_id == user.id).distinct()).all():
+        _add(row[0] if isinstance(row, (tuple, list)) else row)
+    if not slugs:
+        return []
+    maps = s.exec(select(TaskMap).where(TaskMap.slug.in_(slugs))).all()
+    verified = {m.slug for m in maps if m.verified_at}
+    return [slug for slug in slugs if slug in verified]
+
+
 @app.get("/me/milestones/{map_slug}")
 def get_milestones(map_slug: str, user: User = Depends(current_user)):
     return {"milestones": _ensure_milestones(user, map_slug)}
@@ -623,7 +689,16 @@ def get_milestones(map_slug: str, user: User = Depends(current_user)):
 
 @app.get("/me/notifications")
 def get_notifications(user: User = Depends(current_user)):
-    milestones = _ensure_milestones(user, "udyam-register")
+    with Session(engine) as s:
+        slugs = _user_verified_map_slugs(s, user)
+    milestones: list[dict] = []
+    for slug in slugs:
+        try:
+            milestones.extend(_ensure_milestones(user, slug))
+        except HTTPException:
+            # map removed/unreviewed between listing and now: skip it, the
+            # remaining pathways' deadlines still surface below
+            continue
     now = datetime.now(timezone.utc)
     with Session(engine) as s:
         for milestone in milestones:
@@ -703,20 +778,33 @@ def _make_text_pdf(lines: list[str]) -> bytes:
 
 @app.get("/me/progress-report.pdf")
 def progress_report_pdf(user: User = Depends(current_user)):
-    milestones = _ensure_milestones(user, "udyam-register")
-    completed = sum(item["status"] == "completed" for item in milestones)
+    with Session(engine) as s:
+        slugs = _user_verified_map_slugs(s, user)
+        titles = ({m.slug: m.title for m in s.exec(select(TaskMap).where(
+            TaskMap.slug.in_(slugs))).all()} if slugs else {})
     lines = [
         "Civic Path Navigator — Personalized Progress Report",
         f"Citizen: {user.name or user.email}",
         f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
         "",
-        "Roadmap: Register a small business (Udyam + GST + Shops)",
-        f"Progress: {completed} of {len(milestones)} milestones completed",
-        "",
     ]
-    for item in milestones:
-        marker = "COMPLETED" if item["status"] == "completed" else f"DUE {item['due_at'][:10]}"
-        lines.append(f"[{marker}] {item['title']}")
+    if not slugs:
+        lines.append("No reviewed pathways yet - build a pathway and it will "
+                     "appear here after source review.")
+    for slug in slugs:
+        try:
+            milestones = _ensure_milestones(user, slug)
+        except HTTPException:
+            continue
+        completed = sum(item["status"] == "completed" for item in milestones)
+        lines += [
+            f"Roadmap: {titles.get(slug, slug)}",
+            f"Progress: {completed} of {len(milestones)} milestones completed",
+            "",
+        ]
+        for item in milestones:
+            marker = "COMPLETED" if item["status"] == "completed" else f"DUE {item['due_at'][:10]}"
+            lines.append(f"[{marker}] {item['title']}")
     return Response(content=_make_text_pdf(lines), media_type="application/pdf",
                     headers={"Content-Disposition": "attachment; filename=civic-progress-report.pdf"})
 
@@ -778,12 +866,19 @@ def telegram_webhook(body: dict, x_telegram_token: str = Header(default=None)):
         s.add(me)
         s.add(link)
         s.commit()
+        confirm_warning = ""
         try:
             from . import alerts as alertsmod
             alertsmod.send(chat_id, "✅ Alerts linked. You'll get due-date and change pings here.")
-        except Exception:
-            pass
-    return {"ok": True, "linked": True}
+        except Exception as e:
+            obsmod.warn("telegram", "link confirmation message failed",
+                        chat_id=chat_id, error=e)
+            confirm_warning = ("linked, but the confirmation message could "
+                               f"not be sent: {str(e)[:120]}")
+    out = {"ok": True, "linked": True}
+    if confirm_warning:
+        out["warning"] = confirm_warning
+    return out
 
 
 # ---------------- Admin desk ----------------
@@ -1236,7 +1331,9 @@ async def build_task(body: "BuildTaskIn", bg: _BT, user: User = Depends(current_
     def _discover_urls(q: str) -> list[str]:
         try:
             found = discovermod.discover(q, max_results=8)
-        except Exception:
+        except Exception as e:
+            obsmod.warn("discover", "live URL discovery failed, catalog fallback",
+                        q=q, error=e)
             return []
         return [r["url"] for r in found[:5] if r.get("url")]
 
@@ -1340,6 +1437,8 @@ def get_task_map(slug: str, user: User = Depends(current_user)):
             raise HTTPException(404, "unknown map")
         if not m.verified_at and not user.is_admin and m.created_by != user.id:
             raise HTTPException(404, "unknown map")
+        from . import packet as packetmod
+        task_sources = json.loads(m.source_urls)
         return {
             "slug": m.slug,
             "title": m.title,
@@ -1347,7 +1446,8 @@ def get_task_map(slug: str, user: User = Depends(current_user)):
             "state": m.state,
             "service_type": m.service_type,
             "graph": json.loads(m.graph_json),
-            "sources": json.loads(m.source_urls),
+            "sources": task_sources,
+            "warnings": packetmod.source_warnings(task_sources),
             "verified": bool(m.verified_at),
             "verified_at": m.verified_at
         }
@@ -1658,8 +1758,9 @@ def grievance_submit(body: GrievanceIn, user: User = Depends(current_user)):
                 os.environ.get("GRIEVANCE_EMAIL", "grievance@civicpath.in"),
                 f"New grievance #{g.id} from {user.email}",
                 f"Subject: {g.subject}\n\n{g.message[:4000]}")
-        except Exception:
-            pass
+        except Exception as e:
+            obsmod.warn("grievance", "grievance notification email failed",
+                        id=g.id, error=e)
         return {"id": g.id, "status": g.status,
                 "expected_response_days": 7}
 

@@ -430,6 +430,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .cv-review-banner>span{width:19px;height:19px;flex:0 0 19px;display:grid;place-items:center;border-radius:50%;background:#dbe9ed;font-size:11px;font-weight:800}
 .cv-review-banner p{margin:0;color:#61747e;font-size:10px;line-height:1.5}
 .cv-review-banner strong{color:#355b70}
+.cv-source-warnings{border-color:#ead9b4;background:#fdf7e7;color:#7d6430}
+.cv-source-warnings>span{background:#f4e6c1;color:#8a6a1f}
+.cv-source-warnings p{color:#7d6430}
+.cv-source-warnings strong{color:#6d5315}
 .cv-view-toggle{display:flex;overflow:hidden;border:1px solid #d4ddda;border-radius:7px}
 .cv-view-toggle button{border:0;background:#fff;color:#5b6a73;padding:8px 12px;font-size:10px;font-weight:700}
 .cv-view-toggle button.active{background:#eaf3ed;color:#1e6d51}

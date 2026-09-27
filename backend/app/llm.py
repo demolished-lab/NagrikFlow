@@ -16,6 +16,8 @@ import os
 
 import httpx
 
+from .obs import warn
+
 OFFLINE_ONLY = os.environ.get("OFFLINE_ONLY", "") == "1"
 
 # role -> ordered free-model preference (probed live 2026-09-26:
@@ -53,22 +55,29 @@ def _chat(base: str, model: str, prompt: str, key: str = "",
     return text
 
 
-def complete(prompt: str, role: str = "extract") -> tuple[str, str]:
+def complete(prompt: str, role: str = "extract",
+             max_tokens: int = 400) -> tuple[str, str]:
     """Return (text, via). Bynara role-chain first, Ollama fallback. Raises if none."""
     if not OFFLINE_ONLY and BYNARA_KEY:
         for model in ROLES.get(role, ROLES["extract"]):
             try:
-                return _chat(BYNARA_BASE, model, prompt, BYNARA_KEY), f"bynara/{model}"
-            except Exception:
+                return (_chat(BYNARA_BASE, model, prompt, BYNARA_KEY,
+                              max_tokens=max_tokens),
+                        f"bynara/{model}")
+            except Exception as e:
+                warn("llm", "bynara model failed, trying next",
+                     model=model, role=role, error=e)
                 continue
     try:
-        return _chat(f"{OLLAMA_BASE}/v1", OLLAMA_MODEL, prompt), f"ollama/{OLLAMA_MODEL}"
+        return (_chat(f"{OLLAMA_BASE}/v1", OLLAMA_MODEL, prompt,
+                      max_tokens=max_tokens),
+                f"ollama/{OLLAMA_MODEL}")
     except Exception as e:
         raise RuntimeError(f"no LLM reachable (bynara + ollama): {e}")
 
 
-def _chat_raw(prompt: str) -> tuple[str, str]:
-    return complete(prompt, role="extract")
+def _chat_raw(prompt: str, max_tokens: int = 400) -> tuple[str, str]:
+    return complete(prompt, role="extract", max_tokens=max_tokens)
 
 
 def phrase_dashboard(board: dict) -> tuple[str, str]:
@@ -82,6 +91,7 @@ def phrase_dashboard(board: dict) -> tuple[str, str]:
               f"next win with effort, warn about official-site verification.")
     try:
         return complete(prompt, role="brief")
-    except Exception:
+    except Exception as e:
+        warn("llm", "brief generation failed, using template", error=e)
         return (f"You hold: {have}. Easiest next win: {nxt_txt}. "
                 "Always verify on the official .gov site before applying."), "template"

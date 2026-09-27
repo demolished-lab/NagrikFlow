@@ -686,3 +686,32 @@ def test_progress_and_notification_unique_indexes(client, user):
                 Notification.user_id == uid)).all():
             s.delete(row)
         s.commit()
+
+
+def test_migrate_recovers_old_db_missing_new_columns(tmp_path):
+    """A real-world DB at versions 1-6 has taskmap without created_by.
+    m007's ORM SELECT used to crash boot there — the column safety net only
+    ran AFTER the migration loop. It must run before it too."""
+    from sqlalchemy import create_engine, inspect, text
+    from app.migrate import SchemaVersion, migrate
+
+    engine = create_engine(f"sqlite:///{tmp_path}/old.db")
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE taskmap (id INTEGER PRIMARY KEY, slug VARCHAR,"
+            " title VARCHAR, city VARCHAR, graph_json TEXT,"
+            " verified_at TIMESTAMP, source_urls TEXT)"))
+    SchemaVersion.__table__.create(engine, checkfirst=True)
+    with Session(engine) as s:
+        for v in range(1, 7):
+            s.add(SchemaVersion(version=v))
+        s.commit()
+
+    migrate(engine)  # must not raise
+
+    cols = {c["name"] for c in inspect(engine).get_columns("taskmap")}
+    assert "created_by" in cols
+    with Session(engine) as s:
+        applied = {r.version for r in s.exec(select(SchemaVersion)).all()}
+    assert 7 in applied  # m007 completed once the columns existed
+    engine.dispose()

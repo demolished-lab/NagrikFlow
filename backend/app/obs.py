@@ -30,6 +30,17 @@ def norm_path(path: str) -> str:
     return "/" + "/".join(parts[:2]) + "/*"
 
 
+def warn(scope: str, msg: str, **fields) -> None:
+    """One-line JSON warning for swallowed exceptions.
+
+    Fallbacks (heuristic extraction, template briefs, memory-store rate
+    limits, retry loops) are allowed to degrade behavior — never to hide it.
+    Use this in every `except` that does not re-raise or surface the error."""
+    payload = {"level": "warning", "scope": scope, "msg": msg}
+    payload.update({k: str(v)[:300] for k, v in fields.items()})
+    logger.warning(json.dumps(payload, ensure_ascii=False, default=str))
+
+
 def snapshot() -> dict:
     out = {}
     for route, s in _stats.items():

@@ -11,6 +11,7 @@ Both are pure functions over a TaskMap row — no network.
 """
 import json
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from . import worker as workermod
 
@@ -32,9 +33,31 @@ def _sources(raw: str) -> list[dict]:
                 "tier": item.get("tier", ""),
                 "final_url": item.get("final_url", ""),
                 "error": item.get("error", ""),
+                "extract": item.get("extract", ""),
+                "llm_error": item.get("llm_error", ""),
                 "guides": item.get("guides") or [],
                 "fetched_at": item.get("fetched_at", ""),
             })
+    return out
+
+
+def source_warnings(sources: list) -> list[str]:
+    """User-facing degradation notes for one payload: unreachable sources
+    and rules-based (non-AI) extraction — each with the concrete reason,
+    so every degraded path is transparent in API responses and the UI."""
+    out: list[str] = []
+    for s in sources or []:
+        if not isinstance(s, dict) or not s.get("url"):
+            continue
+        host = urlparse(s["url"]).hostname or s["url"]
+        if s.get("ok") is False:
+            err = str(s.get("error") or "").strip()
+            out.append(f"{host} could not be fetched" + (f": {err}" if err else ""))
+        elif s.get("extract") == "heuristic":
+            reason = str(s.get("llm_error") or "").strip() or "AI model unavailable"
+            out.append(
+                f"{host}: steps were extracted by rules, not the AI model "
+                f"({reason})")
     return out
 
 
@@ -103,6 +126,7 @@ def build_packet(m) -> dict:
         "apply_links": apply_links,
         "sources": sources,
         "guides": guides,
+        "warnings": source_warnings(sources),
         "counts": {
             "steps": len(steps),
             "documents": len(checklist),
@@ -121,6 +145,10 @@ def render_markdown(p: dict) -> str:
         p.get("service_type") or "") if x)
     if where:
         lines += [f"Where: {where}", ""]
+    if p.get("warnings"):
+        lines += ["## Data warnings", ""]
+        lines += [f"- {w}" for w in p["warnings"]]
+        lines.append("")
     lines += ["## Steps", ""]
     for st in p["steps"]:
         after = ", ".join(titles.get(r, r) for r in st["prereqs"])

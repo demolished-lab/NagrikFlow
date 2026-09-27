@@ -81,6 +81,8 @@ def test_build_map_sources_carry_final_url_and_guides(monkeypatch):
                         lambda url: (text, "obscura",
                                      "https://dept.gov.in/en/apply"))
     monkeypatch.setattr(W, "llm_extract", lambda t, url, task: [])
+    monkeypatch.setattr(W, "_llm_extract_full",
+                        lambda t, url, task: ([], "llm", ""))
     monkeypatch.setattr(W, "llm_infer_edges", lambda task, nodes: [])
     monkeypatch.setattr(W, "verify_links", lambda nodes: None)
     result = W.build_map("udyam registration", ["https://dept.gov.in/page"])

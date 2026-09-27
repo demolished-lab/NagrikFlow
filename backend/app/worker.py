@@ -20,6 +20,7 @@ from urllib.parse import unquote, urlparse
 import trafilatura
 
 from . import llm as llmmod
+from .obs import warn
 
 UA = "CivicPathNavigator/0.1 (civic-guidance research; contact: admin@civicpath.in)"
 MIN_CHARS = 40  # floor that rejects blocks/CAPTCHAs but keeps small gov pages
@@ -169,19 +170,24 @@ def cascade_fetch_full(url: str) -> tuple[str, str, str]:
     if os.environ.get("CIVIC_EXTRA_TIERS", "1") != "0":
         tiers += [("scrapling", _fetch_scrapling_full),
                   ("jina", _fetch_jina_full)]
+    tier_errors = []
     for name, fn in tiers:
         try:
             text, final = fn(url)
             return text, name, final
-        except Exception:
+        except Exception as e:
+            tier_errors.append(f"{name}: {str(e)[:80]}")
             continue
     try:
         from . import discover as discovermod
         text, final = discovermod.fetch_text(url, return_final=True)
         return text, "wigolo", final
-    except Exception:
-        pass
-    raise RuntimeError(f"all fetch tiers failed for {url}")
+    except Exception as e:
+        tier_errors.append(f"wigolo: {str(e)[:80]}")
+    warn("fetch", "all fetch tiers failed for source", url=url,
+         errors=" | ".join(tier_errors))
+    raise RuntimeError(f"all fetch tiers failed for {url}"
+                       f" ({' | '.join(tier_errors)})")
 
 
 def cascade_fetch(url: str) -> tuple[str, str]:
@@ -459,7 +465,10 @@ def heuristic_extract(text: str, url: str) -> list[dict]:
     return steps
 
 
-def llm_extract(text: str, url: str, task: str) -> list[dict]:
+def _llm_extract_full(text: str, url: str, task: str) -> tuple[list[dict], str, str]:
+    """Return (steps, lane, error). lane = 'llm' | 'heuristic'; error explains
+    any fallback so it can be stored in the map and shown to the user —
+    a degraded extraction is never silent."""
     prompt = (f"Task: {task}\nSource: {url}\nPage text (truncated):\n{text[:6000]}\n\n"
               "Return JSON list of steps: "
               '[{"id":str,"type":"prereq|action|payment|visit","title":str,'
@@ -467,21 +476,32 @@ def llm_extract(text: str, url: str, task: str) -> list[dict]:
               'form URL from the page text for this step ("" if none). Max 8 steps, '
               'ordered. No prose.')
     try:
-        raw, _ = llmmod._chat_raw(prompt)
-    except Exception:
-        return heuristic_extract(text, url)
+        raw, _ = llmmod._chat_raw(prompt, max_tokens=2000)
+    except Exception as e:
+        reason = f"LLM unavailable: {str(e)[:160]}"
+        warn("extract", "LLM extraction failed, rules fallback", url=url, error=e)
+        return heuristic_extract(text, url), "heuristic", reason
     import json
     m = re.search(r"\[.*\]", raw, re.S)
     try:
         steps = json.loads(m.group(0)) if m else []
+        if not isinstance(steps, list) or not steps:
+            raise ValueError("LLM reply contained no step list")
         for s in steps:
             s["url"] = url
             s["link"] = clean_link(s.get("link", ""), url)
             if s["link"] and not page_has_link(s["link"], text):
                 s["link"] = ""  # absent from the fetched page -> hallucinated
-        return steps[:8] if steps else heuristic_extract(text, url)
-    except Exception:
-        return heuristic_extract(text, url)
+        return steps[:8], "llm", ""
+    except Exception as e:
+        reason = f"unparseable LLM reply ({str(e)[:100]}): {raw[:160]}"
+        warn("extract", "unparseable LLM reply, rules fallback",
+             url=url, error=e, raw=raw[:200])
+        return heuristic_extract(text, url), "heuristic", reason
+
+
+def llm_extract(text: str, url: str, task: str) -> list[dict]:
+    return _llm_extract_full(text, url, task)[0]
 
 
 # ---------------- Graph assembly: merge + cross-source dependency inference ----
@@ -704,13 +724,18 @@ def llm_infer_edges(task: str, nodes: list[dict]) -> list[list[str]]:
     import json
     try:
         raw, _ = llmmod._chat_raw(prompt)
-    except Exception:
+    except Exception as e:
+        warn("edges", "LLM edge inference unavailable, no cross-source edges",
+             error=e)
         return []
     try:
         m = re.search(r"\[.*\]", raw, re.S)
         pairs = json.loads(m.group(0)) if m else []
-        return pairs if isinstance(pairs, list) else []
-    except Exception:
+        if not isinstance(pairs, list):
+            raise ValueError("reply was not a JSON array")
+        return pairs
+    except Exception as e:
+        warn("edges", "unparseable edge reply", error=e, raw=raw[:200])
         return []
 
 
@@ -724,14 +749,18 @@ def build_map(task: str, urls: list[str], city: str = "", state: str = "",
         try:
             text, tier, final = cascade_fetch_full(url)
         except Exception as e:
-            sources.append({"url": url, "ok": False, "error": str(e)[:120]})
+            sources.append({"url": url, "ok": False, "error": str(e)[:200]})
             continue
-        steps = llm_extract(text, url, task)
+        steps, lane, llm_error = _llm_extract_full(text, url, task)
         per_source.append((url, steps))
-        sources.append({"url": url, "ok": True, "tier": tier,
-                        "final_url": final,
-                        "guides": extract_guides(text, final or url),
-                        "fetched_at": datetime.now(timezone.utc).isoformat()})
+        entry = {"url": url, "ok": True, "tier": tier,
+                 "final_url": final,
+                 "guides": extract_guides(text, final or url),
+                 "extract": lane,
+                 "fetched_at": datetime.now(timezone.utc).isoformat()}
+        if llm_error:
+            entry["llm_error"] = llm_error
+        sources.append(entry)
 
     nodes, edges, edge_sources = merge_sources(per_source)
     node_ids = {n["id"] for n in nodes}
