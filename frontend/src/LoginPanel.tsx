@@ -4,11 +4,12 @@ import { STR, lang } from './i18n';
 
 interface LoginPanelProps {
   onLogin: (email: string) => void;
+  initialMode?: 'login' | 'register';
 }
 
-export default function LoginPanel({ onLogin }: LoginPanelProps) {
+export default function LoginPanel({ onLogin, initialMode = 'login' }: LoginPanelProps) {
   const t = STR[lang()];
-  const [isLogin, setIsLogin] = useState(true);
+  const [isLogin, setIsLogin] = useState(initialMode === 'login');
   const [form, setForm] = useState({ email: '', password: '', name: '', city: '', state: '' });
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
