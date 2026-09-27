@@ -1,4 +1,4 @@
-"""Backups: SQLite online snapshot or Postgres pg_dump + retention +
+r"""Backups: SQLite online snapshot or Postgres pg_dump + retention +
 optional S3-compatible cloud upload (AWS S3 / Cloudflare R2 / MinIO).
 
 Local dir: BACKUP_DIR (default E:\backups\civic), keeps BACKUP_KEEP newest
@@ -13,7 +13,7 @@ import sqlite3
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from sqlalchemy.engine import make_url
 
 BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", r"E:\backups\civic"))
 BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "7"))
@@ -59,12 +59,13 @@ def _pg_dump(engine, out: Path) -> None:
     pg = shutil.which("pg_dump")
     if not pg:
         raise RuntimeError("pg_dump not found on PATH (install postgresql-client)")
-    url = str(engine.url).replace("postgresql+psycopg://", "postgresql://")
-    p = urlparse(url)
-    password = p.password or ""
-    host = p.hostname or "localhost"
-    port = f":{p.port}" if p.port else ""
-    clean = f"postgresql://{p.username or ''}@{host}{port}{p.path}"
+    u = engine.url
+    if not hasattr(u, "password"):
+        u = make_url(str(u))
+    password = u.password or ""
+    host = u.host or "localhost"
+    port = f":{u.port}" if u.port else ""
+    clean = f"postgresql://{u.username or ''}@{host}{port}/{u.database or ''}"
     env = dict(os.environ)
     if password:
         env["PGPASSWORD"] = password  # keep the password off the argv
