@@ -7,7 +7,7 @@ import { STR, lang } from './i18n';
 type GNode = { id: string; type: string; title: string; detail?: string; url?: string; fee?: string };
 type Status = 'ready' | 'action' | 'unlocked' | 'verified';
 type Filters = { node_type: string; status: string; q: string };
-type MapPayload = { graph: { nodes: GNode[]; edges: string[][] }; filters?: { types?: string[]; statuses?: string[]; total?: number }; sources?: string[]; title?: string; city?: string };
+type MapPayload = { graph: { nodes: GNode[]; edges: string[][] }; filters?: { types?: string[]; statuses?: string[]; total?: number }; sources?: string[]; title?: string; city?: string; state?: string; verified?: boolean; edge_sources?: Record<string, string> };
 
 const STATUS_CONFIG: Record<Status, { color: string; bg: string; badge: string; icon: string }> = {
   ready: { color: '#1e3a8a', bg: '#eff6ff', badge: 'Ready', icon: '◌' },
@@ -45,9 +45,15 @@ export default function Roadmap({ slug }: { slug: string }) {
     try {
       const [map, progress] = await Promise.all([api.map(slug, filters), api.progress(slug)]);
       setPayload(map);
-      setCompleted(new Set(progress.steps || []));
+      const completedSet = new Set<string>(progress.steps || []);
+      setCompleted(completedSet);
     } catch (e: any) {
-      setErr(String(e.message || e));
+      if (e.message?.includes('not currently verified')) {
+        // Map is unverified - show warning but don't error out
+        setErr('This map has not been verified by an admin yet.');
+      } else {
+        setErr(String(e.message || e));
+      }
     } finally {
       setLoading(false);
     }
@@ -92,14 +98,14 @@ export default function Roadmap({ slug }: { slug: string }) {
 
   return <div className="cv-path-view cv-roadmap-view">
     <section className="cv-path-input cv-roadmap-toolbar">
-      <div className="cv-roadmap-toolbar-head"><div><span className="cv-eyebrow">VERIFIED CIVIC MAP</span><h1>{payload.title || t.pathTitle || 'Your Procedure Path'}</h1><p>{payload.city ? `${payload.city} · ` : ''}{payload.filters?.total || payload.graph.nodes.length} steps from verified sources</p></div><div className="cv-view-toggle"><button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}>⌘ Map</button><button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>☷ List</button></div></div>
+      <div className="cv-roadmap-toolbar-head"><div><span className="cv-eyebrow">{payload.verified ? 'VERIFIED CIVIC MAP' : 'PENDING VERIFICATION'}</span><h1>{payload.title || t.pathTitle || 'Your Procedure Path'}</h1><p>{payload.city ? `${payload.city} · ` : ''}{payload.state ? `${payload.state} · ` : ''}{payload.filters?.total || payload.graph.nodes.length} steps from verified sources</p>{!payload.verified && <span className="cv-warning-badge">⚠ Pending admin verification</span>}</div><div className="cv-view-toggle"><button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}>⌘ Map</button><button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>☷ List</button></div></div>
       <div className="cv-filter-row"><label className="cv-filter-search">⌕<input value={filters.q} onChange={(e) => updateFilter('q', e.target.value)} placeholder="Search steps, documents or fees" /></label><select value={filters.node_type} onChange={(e) => updateFilter('node_type', e.target.value)} aria-label="Filter by step type"><option value="">All step types</option>{(payload.filters?.types || []).map((type) => <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>)}</select><select value={filters.status} onChange={(e) => updateFilter('status', e.target.value)} aria-label="Filter by status"><option value="">All statuses</option>{(payload.filters?.statuses || []).map((status) => <option key={status} value={status}>{STATUS_CONFIG[status as Status]?.badge || status}</option>)}</select><button className="cv-filter-reset" onClick={resetFilters}>Reset</button></div>
       <div className="cv-filter-summary">{loading ? 'Refreshing map…' : `${payload.graph.nodes.length} visible steps`} {filters.q || filters.node_type || filters.status ? <span> · Filters are synced with the API</span> : null}</div>
     </section>
 
     {view === 'map' ? <section className="cv-interactive-map" aria-label="Interactive civic procedure map"><ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView minZoom={0.4} maxZoom={1.4}><MiniMap nodeColor={(node) => STATUS_CONFIG[(node.data?.status || 'ready') as Status]?.color || '#0871cf'} /><Controls /><Background color="#d9e6f2" gap={20} /></ReactFlow>{flowNodes.length === 0 && <div className="cv-map-empty">No steps match these filters. <button onClick={resetFilters}>Clear filters</button></div>}</section> : <section className="cv-path-timeline cv-filtered-list">{payload.graph.nodes.map((node, index) => { const status = getStatus(node); const cfg = STATUS_CONFIG[status]; return <article className="cv-step-card cv-filtered-step" key={node.id} onClick={() => setSelected(node)}><div className="cv-step-header"><span className="cv-step-badge" style={{ background: cfg.bg, color: cfg.color }}>{cfg.icon} {cfg.badge}</span><span className="cv-step-step">Step {index + 1}</span></div><h3 className="cv-step-title">{node.title}</h3><p>{node.detail || 'Verified dependency in your civic workflow.'}</p>{node.fee && <small>Fee: {node.fee}</small>}<div className="cv-filtered-step-actions">{node.url && <a href={node.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Official source ↗</a>}{status !== 'verified' && <button className="cv-btn cv-btn-sm cv-btn-indigo" onClick={(e) => { e.stopPropagation(); markDone(node); }}>✓ Mark Done</button>}</div></article>; })}</section>}
 
-    <section className="cv-sources-section cv-map-sources"><h4>⌕ {t.sourcesChecked || 'Sources Checked'}</h4><div className="cv-source-chips">{(payload.sources || []).map((source) => <div key={source} className="cv-source-chip cv-verified"><span>✓</span> {new URL(source).hostname.replace(/^www\./, '')}</div>)}</div></section>
-    {selected && <aside className="cv-detail-panel cv-map-detail"><button onClick={() => setSelected(null)} className="cv-close-btn">×</button><span className={`cv-status cv-status-${getStatus(selected)}`}>{STATUS_CONFIG[getStatus(selected)].badge}</span><h2>{selected.title}</h2><p>{selected.detail || t.noDetail || 'No additional details available for this step.'}</p>{selected.fee && <p><b>{t.rmFee || 'Fee'}:</b> {selected.fee}</p>}{selected.url && <a href={selected.url} target="_blank" rel="noreferrer">{t.rmOpen || 'Open official site'} ↗</a>}{getStatus(selected) !== 'verified' && <button className="cv-btn cv-btn-indigo" onClick={() => markDone(selected)}>✓ {t.rmDone || 'Mark done'}</button>}</aside>}
+    <section className="cv-sources-section cv-map-sources"><h4>⌕ {t.sourcesChecked || 'Sources Checked'}</h4><div className="cv-source-chips">{(payload.sources || []).map((source) => <div key={source} className="cv-source-chip cv-verified"><span>✓</span> {new URL(source).hostname.replace(/^www\./, '')}</div>)}</div>{!payload.verified && <p className="cv-unverified-note">This path is generated but awaiting admin verification.</p>}</section>
+    {selected && <aside className="cv-detail-panel cv-map-detail"><button onClick={() => setSelected(null)} className="cv-close-btn">×</button><span className={`cv-status cv-status-${getStatus(selected)}`}>{STATUS_CONFIG[getStatus(selected)].badge}</span><h2>{selected.title}</h2><p>{selected.detail || t.noDetail || 'No additional details available for this step.'}</p>{selected.fee && <p><b>{t.rmFee || 'Fee'}:</b> {selected.fee}</p>}{selected.url && <a href={selected.url} target="_blank" rel="noreferrer">{t.rmOpen || 'Open official site'} ↗</a>}{payload.edge_sources && (() => { const key = Object.keys(payload.edge_sources).find(k => k.includes(selected.id)); return key ? <p><small>Source: {payload.edge_sources[key]}</small></p> : null; })()}{getStatus(selected) !== 'verified' && <button className="cv-btn cv-btn-indigo" onClick={() => markDone(selected)}>✓ {t.rmDone || 'Mark done'}</button>}</aside>}
   </div>;
 }

@@ -109,10 +109,12 @@ def llm_extract(text: str, url: str, task: str) -> list[dict]:
         return heuristic_extract(text, url)
 
 
-def build_map(task: str, urls: list[str]) -> dict:
+def build_map(task: str, urls: list[str], city: str = "", state: str = "") -> dict:
     """Fetch each URL via cascade, extract steps, merge into node-link graph."""
     nodes, edges, sources = [], [], []
     seen = set()
+    # Track source provenance per edge
+    edge_sources: dict[tuple, str] = {}
     for url in urls:
         try:
             text, tier = cascade_fetch(url)
@@ -122,7 +124,7 @@ def build_map(task: str, urls: list[str]) -> dict:
         steps = llm_extract(text, url, task)
         prev = None
         for s in steps:
-            sid = re.sub(r"\W+", "-", s.get("id", s.get("title", ""))).strip("-").lower()[:40]
+            sid = re.sub(r"\W+", "-", s.get("id", s.get("title", "‍"))).strip("-").lower()[:40]
             if sid not in seen:
                 seen.add(sid)
                 nodes.append({"id": sid, "type": s.get("type", "action"),
@@ -132,7 +134,9 @@ def build_map(task: str, urls: list[str]) -> dict:
                 e = [prev, sid]
                 if e not in edges:
                     edges.append(e)
+                # Record which source URL established this dependency
+                edge_sources[(prev, sid)] = url
             prev = sid
         sources.append({"url": url, "ok": True, "tier": tier,
                         "fetched_at": datetime.now(timezone.utc).isoformat()})
-    return {"nodes": nodes, "edges": edges, "sources": sources}
+    return {"nodes": nodes, "edges": edges, "edge_sources": edge_sources, "sources": sources, "city": city, "state": state}

@@ -32,6 +32,10 @@ def _ensure_columns(engine):
             stmts.append("ALTER TABLE taskmap ADD COLUMN content_hash VARCHAR DEFAULT ''")
         if "checked_at" not in thave:
             stmts.append("ALTER TABLE taskmap ADD COLUMN checked_at DATETIME")
+        if "state" not in thave:
+            stmts.append("ALTER TABLE taskmap ADD COLUMN state VARCHAR DEFAULT ''")
+        if "edge_sources" not in thave:
+            stmts.append("ALTER TABLE taskmap ADD COLUMN edge_sources TEXT DEFAULT ''")
     except Exception:
         pass
     if stmts:

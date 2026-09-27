@@ -4,7 +4,7 @@ import json
 from sqlmodel import Session
 
 
-def test_unverified_maps_are_not_served(client, user):
+def test_unverified_maps_are_served_with_flag(client, user):
     from app import main as M
     from app.models import TaskMap
 
@@ -12,7 +12,9 @@ def test_unverified_maps_are_not_served(client, user):
         s.add(TaskMap(slug="draft-map", title="Draft", graph_json=json.dumps({"nodes": [], "edges": []})))
         s.commit()
     response = client.get("/maps/draft-map", headers=user["headers"])
-    assert response.status_code == 404
+    assert response.status_code == 200
+    data = response.json()
+    assert data["verified"] is False
 
 
 def test_progress_requires_a_real_step(client, user):

@@ -79,7 +79,7 @@ export default function HomeView() {
 
   const navigateToRoadmap = () => {
     if (build.slug) {
-      window.location.href = `/roadmap/${build.slug}`;
+      window.location.hash = `/roadmap/${build.slug}`;
     }
   };
 

@@ -56,11 +56,13 @@ class TaskMap(SQLModel, table=True):
     slug: str = Field(unique=True, index=True)  # "udyam-register"
     title: str = ""
     city: str = ""
+    state: str = ""
     graph_json: str = "{}"  # node_link_data: steps + edges
     verified_at: Optional[datetime] = None
     source_urls: str = "[]"
     content_hash: str = ""  # sha256 of fetched source texts at build/verify
     checked_at: Optional[datetime] = None
+    edge_sources: str = "{}"  # JSON map of (src,tgt) -> source URL for provenance
 
 
 class Progress(SQLModel, table=True):

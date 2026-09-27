@@ -122,11 +122,30 @@ export default function App() {
         {route.tab === 'admin' && <Admin />}
       </div>
     </main>
-    <aside className="cv-context-panel"><CivicTwinPanel /></aside>
+    <aside className="cv-context-panel"><CivicTwinPanel token={token} isAdmin={isAdmin} /></aside>
   </div>;
 }
 
-function CivicTwinPanel() {
+function CivicTwinPanel({ token, isAdmin }: { token: string; isAdmin: boolean }) {
+  const [docs, setDocs] = useState<any[]>([]);
+  const [unlocks, setUnlocks] = useState<any[]>([]);
+  const [nextWin, setNextWin] = useState<string>('');
+  
+  useEffect(() => {
+    if (!token) return;
+    api.brief().then(data => {
+      if (data?.documents) setDocs(data.documents);
+      if (data?.unlocks) setUnlocks(data.unlocks);
+      if (data?.next_win) setNextWin(data.next_win);
+    }).catch(() => {});
+  }, [token]);
+  
+  const docList = docs.length > 0 ? docs : [
+    { name: 'Identity', status: 'available' },
+    { name: 'Address proof', status: 'available' }
+  ];
+  const unlockList = unlocks.length > 0 ? unlocks : [];
+  
   return <div className="cv-twin-panel">
     <div className="cv-twin-heading">
       <span className="cv-twin-avatar">♙</span>
@@ -134,33 +153,34 @@ function CivicTwinPanel() {
     </div>
     <div className="cv-twin-section">
       <h3>Your documents</h3>
-      {[['♙','Identity','VERIFIED','verified'],['▤','Property tax receipt','VERIFIED','verified'],['◉','Address proof','AVAILABLE','available']].map(([icon, name, status, kind]) => (
-        <div key={name} className="cv-twin-doc">
-          <span className={`cv-doc-round ${kind}`}>{icon}</span>
-          <strong>{name}</strong>
-          <span className={`cv-doc-badge ${kind}`}>{status}</span>
+      {docList.map((doc: any, i: number) => (
+        <div key={i} className="cv-twin-doc">
+          <span className={`cv-doc-round ${doc.status}`}>{doc.icon || '▤'}</span>
+          <strong>{doc.name}</strong>
+          <span className={`cv-doc-badge ${doc.status}`}>{doc.status === 'verified' ? 'VERIFIED' : doc.status === 'available' ? 'AVAILABLE' : 'PENDING'}</span>
           <b>›</b>
         </div>
       ))}
     </div>
-    <div className="cv-twin-section">
+    {unlockList.length > 0 && <div className="cv-twin-section">
       <h3>What this unlocks</h3>
-      <div className="cv-unlock-card">
-        <span>▤</span>
-        <strong>Property tax receipt<br/>→ water connection application</strong>
-        <b>›</b>
-      </div>
-    </div>
-    <div className="cv-twin-section">
+      {unlockList.map((item: any, i: number) => (
+        <div key={i} className="cv-unlock-card">
+          <span>▤</span>
+          <strong>{item.title || item.name}</strong>
+          <b>›</b>
+        </div>
+      ))}
+    </div>}
+    {nextWin && <div className="cv-twin-section">
       <div className="cv-next-win">
         <div className="cv-star">★</div>
         <div>
           <strong>Easiest next win</strong>
-          <p>Upload latest occupancy proof</p>
-          <small>This will unlock the application step<br/>and save 2–3 days.</small>
+          <p>{nextWin}</p>
         </div>
         <b>›</b>
       </div>
-    </div>
+    </div>}
   </div>;
 }

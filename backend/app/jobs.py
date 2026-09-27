@@ -34,7 +34,7 @@ def run_build(engine, job_id: int):
         s.commit()
         p = json.loads(j.payload)
     try:
-        result = workermod.build_map(p["task"], p["urls"])
+        result = workermod.build_map(p["task"], p["urls"], city=p.get("city", ""), state=p.get("state", ""))
         with Session(engine) as s:
             m = s.exec(select(TaskMap).where(
                 TaskMap.slug == p["slug"])).first()
@@ -42,10 +42,14 @@ def run_build(engine, job_id: int):
             if m:
                 m.title, m.graph_json = p["task"], payload
                 m.source_urls = json.dumps(result["sources"])
+                m.edge_sources = json.dumps(result.get("edge_sources", {}))
+                m.city = p.get("city", "") or m.city
+                m.state = p.get("state", "") or m.state
                 m.verified_at = None
                 s.add(m)
             else:
-                s.add(TaskMap(slug=p["slug"], title=p["task"], graph_json=payload,
+                s.add(TaskMap(slug=p["slug"], title=p["task"], city=p.get("city", ""),
+                              state=p.get("state", ""), graph_json=payload,
                               source_urls=json.dumps(result["sources"])))
             s.commit()
         base = watchmod.recheck(engine, p["slug"])

@@ -364,8 +364,9 @@ def get_map(
         m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
         if not m:
             raise HTTPException(404, "unknown map")
+        # Allow unverified maps but flag them so the UI can warn the user
         if not m.verified_at:
-            raise HTTPException(404, "map is not currently verified")
+            pass  # continue below; caller checks verified field
         graph = json.loads(m.graph_json)
         completed = {p.step_id for p in s.exec(select(Progress).where(
             Progress.user_id == user.id, Progress.map_slug == slug)).all()}
@@ -398,7 +399,8 @@ def get_map(
     return {"slug": m.slug, "title": m.title, "city": m.city,
             "graph": {"nodes": filtered_nodes, "edges": filtered_edges},
             "filters": filter_options, "sources": json.loads(m.source_urls),
-            "verified": m.verified_at}
+            "verified": bool(m.verified_at),
+            "edge_sources": json.loads(m.edge_sources) if m.edge_sources else {}}
 
 
 class DoneIn(BaseModel):
