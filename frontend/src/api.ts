@@ -17,6 +17,7 @@ export const api = {
   register: (b: object) => req('/auth/register', { method: 'POST', body: JSON.stringify(b) }),
   login: (b: object) => req('/auth/login', { method: 'POST', body: JSON.stringify(b) }),
   dashboard: () => req('/me/dashboard'),
+  profile: () => req('/me/profile'),
   brief: () => req('/me/brief'),
   map: (slug: string, filters: Record<string, string> = {}) => {
     const query = new URLSearchParams(
@@ -27,6 +28,10 @@ export const api = {
   done: (map_slug: string, step_id: string) =>
     req('/me/progress', { method: 'POST', body: JSON.stringify({ map_slug, step_id }) }),
   progress: (map_slug: string) => req(`/me/progress/${encodeURIComponent(map_slug)}`),
+  milestones: (map_slug: string) => req(`/me/milestones/${encodeURIComponent(map_slug)}`),
+  notifications: () => req('/me/notifications'),
+  readNotification: (id: number) => req(`/me/notifications/${id}/read`, { method: 'POST' }),
+  progressReport: () => fetch(`${API}/me/progress-report.pdf`, { headers: headers() }),
   telegramLinkCode: () => req('/me/telegram/link-code', { method: 'POST' }),
   dlConnect: () => req('/auth/digilocker/connect'),
   // Agent API

@@ -68,7 +68,8 @@ export default function Admin() {
   };
 
   return (
-    <div style={{ display: 'grid', gap: 12, maxWidth: 760 }}>
+    <div className="cv-admin-view" style={{ display: 'grid', gap: 12, maxWidth: 860 }}>
+      <div className="cv-admin-header"><div><span className="cv-eyebrow">ADMIN WORKSPACE</span><h1>Pathway verification desk</h1><p>Review source-backed civic maps, stamp verified workflows, and monitor rechecks.</p></div><span className="cv-admin-role">ADMIN ONLY</span></div>
       {err && <p style={{ color: 'red' }}>{err}</p>}
       <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
         <h3>🗂️ {t.admTitle}</h3>

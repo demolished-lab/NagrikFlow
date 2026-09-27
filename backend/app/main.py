@@ -4,11 +4,12 @@ import os
 import re
 import ipaddress
 import socket
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -46,7 +47,8 @@ from . import agent as agentmod  # noqa: E402
 from . import hermes_core as hermesmod  # noqa: E402
 from . import hermes_subagents as submod  # noqa: E402
 from fastapi import BackgroundTasks as _BT  # noqa: E402
-from .models import Consent, Grievance, Job, LinkCode, OAuthState, OtpCode, Progress, TaskMap, User, VaultItem
+from .models import (Consent, Grievance, Job, LinkCode, Notification, OAuthState,
+                     OtpCode, Progress, RoadmapMilestone, TaskMap, User, VaultItem)
 
 ADMIN_DEFAULT = "demo@civic.test" if os.environ.get("ALLOW_DEV_SECRET") == "1" else ""
 ADMIN_EMAILS = {e.strip().lower() for e in
@@ -321,6 +323,13 @@ def dashboard(user: User = Depends(current_user)):
     return board
 
 
+@app.get("/me/profile")
+def profile(user: User = Depends(current_user)):
+    return {"id": user.id, "email": user.email, "name": user.name,
+            "city": user.city, "state": user.state,
+            "role": "admin" if user.is_admin else "citizen"}
+
+
 @app.get("/me/brief")
 def brief(user: User = Depends(current_user)):
     """LLM-phrased plain-words summary of your dashboard (local first)."""
@@ -406,6 +415,145 @@ def get_progress(map_slug: str, user: User = Depends(current_user)):
     with Session(engine) as s:
         return {"steps": [p.step_id for p in s.exec(select(Progress).where(
             Progress.user_id == user.id, Progress.map_slug == map_slug)).all()]}
+
+
+def _ensure_milestones(user: User, map_slug: str) -> list[dict]:
+    """Create stable, per-user deadlines for map nodes the first time they are viewed."""
+    now = datetime.now(timezone.utc)
+    with Session(engine) as s:
+        task_map = s.exec(select(TaskMap).where(TaskMap.slug == map_slug)).first()
+        if not task_map or not task_map.verified_at:
+            raise HTTPException(404, "unknown or unverified map")
+        nodes = json.loads(task_map.graph_json).get("nodes", [])
+        completed = {p.step_id for p in s.exec(select(Progress).where(
+            Progress.user_id == user.id, Progress.map_slug == map_slug)).all()}
+        rows = s.exec(select(RoadmapMilestone).where(
+            RoadmapMilestone.user_id == user.id,
+            RoadmapMilestone.map_slug == map_slug)).all()
+        by_step = {row.step_id: row for row in rows}
+        for index, node in enumerate(nodes):
+            step_id = str(node.get("id", ""))
+            if not step_id or step_id in by_step:
+                continue
+            row = RoadmapMilestone(user_id=user.id, map_slug=map_slug,
+                                   step_id=step_id,
+                                   due_at=now + timedelta(days=(index + 1) * 7))
+            s.add(row)
+            by_step[step_id] = row
+        s.commit()
+        for row in by_step.values():
+            if row.step_id in completed and row.status != "completed":
+                row.status = "completed"
+                s.add(row)
+        s.commit()
+        return [{
+            "id": row.id, "map_slug": row.map_slug, "step_id": row.step_id,
+            "title": next((n.get("title", row.step_id) for n in nodes
+                            if n.get("id") == row.step_id), row.step_id),
+            "due_at": row.due_at.isoformat(),
+            "status": "completed" if row.step_id in completed else row.status,
+            "days_left": (row.due_at - now).days,
+        } for row in sorted(by_step.values(), key=lambda item: item.due_at)]
+
+
+@app.get("/me/milestones/{map_slug}")
+def get_milestones(map_slug: str, user: User = Depends(current_user)):
+    return {"milestones": _ensure_milestones(user, map_slug)}
+
+
+@app.get("/me/notifications")
+def get_notifications(user: User = Depends(current_user)):
+    milestones = _ensure_milestones(user, "udyam-register")
+    now = datetime.now(timezone.utc)
+    with Session(engine) as s:
+        for milestone in milestones:
+            if milestone["status"] == "completed" or milestone["days_left"] > 7:
+                continue
+            reference = f"deadline:{milestone['map_slug']}:{milestone['step_id']}:{milestone['due_at']}"
+            exists = s.exec(select(Notification).where(
+                Notification.user_id == user.id, Notification.reference == reference)).first()
+            if exists:
+                continue
+            overdue = milestone["days_left"] < 0
+            title = f"Overdue milestone: {milestone['title']}" if overdue else f"Upcoming milestone: {milestone['title']}"
+            body = (f"{milestone['title']} was due {abs(milestone['days_left'])} days ago."
+                    if overdue else f"{milestone['title']} is due in {milestone['days_left']} days.")
+            s.add(Notification(user_id=user.id, kind="deadline", reference=reference,
+                               title=title, body=body))
+        s.commit()
+        rows = s.exec(select(Notification).where(Notification.user_id == user.id)
+                      .order_by(Notification.created_at.desc())).all()
+        return {"notifications": [{"id": row.id, "kind": row.kind, "title": row.title,
+                                    "body": row.body, "read": bool(row.read_at),
+                                    "created_at": row.created_at.isoformat()}
+                                   for row in rows[:30]],
+                "unread": sum(1 for row in rows if row.read_at is None)}
+
+
+@app.post("/me/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: int, user: User = Depends(current_user)):
+    with Session(engine) as s:
+        row = s.exec(select(Notification).where(
+            Notification.id == notification_id, Notification.user_id == user.id)).first()
+        if not row:
+            raise HTTPException(404, "notification not found")
+        row.read_at = datetime.now(timezone.utc)
+        s.add(row)
+        s.commit()
+    return {"ok": True}
+
+
+def _pdf_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _make_text_pdf(lines: list[str]) -> bytes:
+    """Create a small dependency-free PDF report using a standard Type1 font."""
+    content = ["BT", "/F1 11 Tf", "50 770 Td"]
+    for index, line in enumerate(lines[:48]):
+        if index:
+            content.append("0 -15 Td")
+        content.append(f"({_pdf_escape(line[:110])}) Tj")
+    content.append("ET")
+    stream = "\n".join(content).encode("latin-1", "replace")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+    ]
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for number, obj in enumerate(objects, 1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{number} 0 obj\n".encode() + obj + b"\nendobj\n")
+    xref = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode())
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode())
+    pdf.extend(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
+    return bytes(pdf)
+
+
+@app.get("/me/progress-report.pdf")
+def progress_report_pdf(user: User = Depends(current_user)):
+    milestones = _ensure_milestones(user, "udyam-register")
+    completed = sum(item["status"] == "completed" for item in milestones)
+    lines = [
+        "Civic Path Navigator — Personalized Progress Report",
+        f"Citizen: {user.name or user.email}",
+        f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        "",
+        "Roadmap: Register a small business (Udyam + GST + Shops)",
+        f"Progress: {completed} of {len(milestones)} milestones completed",
+        "",
+    ]
+    for item in milestones:
+        marker = "COMPLETED" if item["status"] == "completed" else f"DUE {item['due_at'][:10]}"
+        lines.append(f"[{marker}] {item['title']}")
+    return Response(content=_make_text_pdf(lines), media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=civic-progress-report.pdf"})
 
 
 # ---------------- Per-user channel linking ----------------

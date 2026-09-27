@@ -30,12 +30,21 @@ function mapResponse(query = '') {
 
 async function mockAuthenticatedApi(page: import('@playwright/test').Page) {
   await page.addInitScript(() => localStorage.setItem('civic_token', 'e2e-token'));
+  await page.route('**/api/me/profile', async (route) => {
+    await route.fulfill({ json: { id: 7, email: 'citizen@example.com', role: 'citizen' } });
+  });
   await page.route('**/api/maps/udyam-register*', async (route) => {
     const url = new URL(route.request().url());
     await route.fulfill({ json: mapResponse(url.search) });
   });
   await page.route('**/api/me/progress/udyam-register', async (route) => {
     await route.fulfill({ json: { steps: ['aadhaar'] } });
+  });
+  await page.route('**/api/me/milestones/udyam-register', async (route) => {
+    await route.fulfill({ json: { milestones: [{ step_id: 'aadhaar', title: 'Have Aadhaar', due_at: '2026-10-01T00:00:00Z', days_left: 4, status: 'active' }] } });
+  });
+  await page.route('**/api/me/notifications', async (route) => {
+    await route.fulfill({ json: { notifications: [], unread: 0 } });
   });
   await page.route('**/api/me/progress', async (route) => {
     if (route.request().method() === 'POST') await route.fulfill({ json: { ok: true } });
@@ -46,6 +55,9 @@ async function mockAuthenticatedApi(page: import('@playwright/test').Page) {
 test('user can authenticate and reach the personalized dashboard shell', async ({ page }) => {
   await page.route('**/api/auth/login', async (route) => {
     await route.fulfill({ json: { token: 'e2e-auth-token', user_id: 7 } });
+  });
+  await page.route('**/api/me/profile', async (route) => {
+    await route.fulfill({ json: { id: 7, email: 'citizen@example.com', role: 'citizen' } });
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'Login' }).first().click();

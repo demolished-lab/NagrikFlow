@@ -71,6 +71,29 @@ class Progress(SQLModel, table=True):
     done_at: datetime = Field(default_factory=utcnow)
 
 
+class RoadmapMilestone(SQLModel, table=True):
+    """Per-user deadline for an active roadmap step."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    map_slug: str = Field(index=True)
+    step_id: str = Field(index=True)
+    due_at: datetime
+    status: str = "active"  # active | completed | dismissed
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class Notification(SQLModel, table=True):
+    """In-app alert, deduplicated per user and reference."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    kind: str = "deadline"
+    reference: str = Field(index=True)
+    title: str = ""
+    body: str = ""
+    read_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class OtpCode(SQLModel, table=True):
     """Hashed OTP for passwordless login. Single-use, 10-min expiry."""
     id: Optional[int] = Field(default=None, primary_key=True)

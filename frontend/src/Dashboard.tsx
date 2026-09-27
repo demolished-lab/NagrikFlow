@@ -10,15 +10,22 @@ export default function Dashboard() {
   const [brief, setBrief] = useState<any>(null);
   const [map, setMap] = useState<MapSummary | null>(null);
   const [completed, setCompleted] = useState<string[]>([]);
+  const [milestones, setMilestones] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState('');
 
   useEffect(() => {
-    Promise.all([api.dashboard(), api.brief(), api.map('udyam-register'), api.progress('udyam-register')])
-      .then(([data, briefData, mapData, progressData]) => {
+    Promise.all([api.dashboard(), api.brief(), api.map('udyam-register'), api.progress('udyam-register'), api.milestones('udyam-register'), api.notifications()])
+      .then(([data, briefData, mapData, progressData, milestoneData, notificationData]) => {
         setD(data);
         setBrief(briefData);
         setMap(mapData);
         setCompleted(progressData.steps || []);
+        setMilestones(milestoneData.milestones || []);
+        setNotifications(notificationData.notifications || []);
+        setUnread(notificationData.unread || 0);
       })
       .catch((e) => setErr(String(e.message || e)));
   }, []);
@@ -29,11 +36,35 @@ export default function Dashboard() {
   const totalSteps = map?.graph?.nodes?.length || 0;
   const progressPercent = totalSteps ? Math.round((completed.length / totalSteps) * 100) : 0;
   const inProgress = Object.entries(d.in_progress_maps || {}) as [string, number][];
+  const downloadReport = async () => {
+    setExporting(true);
+    try {
+      const response = await api.progressReport();
+      if (!response.ok) throw new Error('Could not create the progress report');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'civic-progress-report.pdf';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) { setErr(String(e.message || e)); }
+    setExporting(false);
+  };
+  const markRead = async (id: number) => {
+    await api.readNotification(id);
+    setNotifications((items) => items.map((item) => item.id === id ? { ...item, read: true } : item));
+    setUnread((count) => Math.max(0, count - 1));
+  };
 
   return <div className="cv-dashboard-view cv-anim-up">
     <div className="cv-welcome-banner"><h1>{d.user?.name ? `Welcome back, ${d.user.name}` : (t.welcomeBack || 'Welcome Back!')}</h1><p className="cv-welcome-sub">{brief?.brief || t.briefDesc || 'Here is your personalized plain-words brief.'}</p></div>
 
-    <section className="cv-progress-summary" aria-label="Personalized roadmap progress"><div className="cv-progress-summary-head"><div><span className="cv-eyebrow">YOUR PERSONAL PROGRESS</span><h2>{map?.title || 'Udyam registration roadmap'}</h2></div><strong>{progressPercent}%</strong></div><div className="cv-progress-track"><span style={{ width: `${progressPercent}%` }} /></div><div className="cv-progress-summary-foot"><span>{completed.length} of {totalSteps || '—'} steps completed</span><span>{inProgress.length ? `${inProgress.length} active path${inProgress.length === 1 ? '' : 's'}` : 'Start a verified path to track progress'}</span></div></section>
+    <section className="cv-progress-summary" aria-label="Personalized roadmap progress"><div className="cv-progress-summary-head"><div><span className="cv-eyebrow">YOUR PERSONAL PROGRESS</span><h2>{map?.title || 'Udyam registration roadmap'}</h2></div><strong>{progressPercent}%</strong></div><div className="cv-progress-track"><span style={{ width: `${progressPercent}%` }} /></div><div className="cv-progress-summary-foot"><span>{completed.length} of {totalSteps || '—'} steps completed</span><span>{inProgress.length ? `${inProgress.length} active path${inProgress.length === 1 ? '' : 's'}` : 'Start a verified path to track progress'}</span></div><button className="cv-report-button" onClick={downloadReport} disabled={exporting}>▣ {exporting ? 'Preparing PDF…' : 'Download progress report'}</button></section>
+
+    {milestones.length > 0 && <section className="cv-milestone-section" aria-label="Active roadmap milestones"><div className="cv-section-heading"><div><span className="cv-eyebrow">ACTIVE MILESTONES</span><h2>Deadline tracker</h2></div><span className="cv-milestone-count">{milestones.filter((item) => item.status !== 'completed').length} open</span></div><div className="cv-milestone-grid">{milestones.map((item) => <div className={`cv-milestone-card ${item.status === 'completed' ? 'complete' : item.days_left < 0 ? 'overdue' : ''}`} key={item.step_id}><div className="cv-milestone-icon">{item.status === 'completed' ? '✓' : item.days_left < 0 ? '!' : '◷'}</div><div><strong>{item.title}</strong><p>{item.status === 'completed' ? 'Completed and synced' : item.days_left < 0 ? `${Math.abs(item.days_left)} days overdue` : `Due in ${item.days_left} days`}</p></div><time>{item.due_at.slice(0, 10)}</time></div>)}</div></section>}
+
+    {notifications.length > 0 && <section className="cv-alert-section" aria-label="Notifications"><div className="cv-section-heading"><div><span className="cv-eyebrow">NOTIFICATIONS</span><h2>Deadline alerts {unread > 0 && <span className="cv-unread-count">{unread}</span>}</h2></div></div><div className="cv-alert-list">{notifications.slice(0, 4).map((item) => <button className={`cv-alert-item ${item.read ? 'read' : ''}`} key={item.id} onClick={() => !item.read && markRead(item.id)}><span className="cv-alert-dot">{item.read ? '✓' : '!'}</span><span><strong>{item.title}</strong><small>{item.body}</small></span><b>›</b></button>)}</div></section>}
 
     {inProgress.length > 0 && <section className="cv-active-paths" aria-label="Active paths"><h2>Active verified paths</h2><div className="cv-active-path-grid">{inProgress.map(([slug, count]) => <div className="cv-active-path" key={slug}><span className="cv-active-path-icon">⌘</span><div><strong>{slug.replace(/-/g, ' ')}</strong><p>{count} completed step{count === 1 ? '' : 's'} synced to your account</p></div><span className="cv-active-path-arrow">›</span></div>)}</div></section>}
 

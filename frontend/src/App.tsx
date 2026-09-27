@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import LandingPage from './LandingPage';
 import LoginPanel from './LoginPanel';
 import Dashboard from './Dashboard';
@@ -7,6 +7,7 @@ import Admin from './Admin';
 import AgentPanel from './Agent';
 import HomeView from './HomeView';
 import { STR, lang, setLang, Lang } from './i18n';
+import { api } from './api';
 
 type Tab = 'home' | 'roadmap' | 'civic_twin' | 'agent' | 'admin';
 type AuthState = 'landing' | 'login' | 'app';
@@ -24,14 +25,16 @@ export default function App() {
   const [authState, setAuthState] = useState<AuthState>(token ? 'app' : 'landing');
   const [tab, setTab] = useState<Tab>('home');
   const [lg, setLg] = useState<Lang>(lang());
+  const [isAdmin, setIsAdmin] = useState(false);
   const t = STR[lg];
+  useEffect(() => { if (authState === 'app') api.profile().then((profile) => setIsAdmin(profile.role === 'admin')).catch(() => setIsAdmin(false)); }, [authState]);
   if (authState === 'landing') return <LandingPage onLogin={() => setAuthState('login')} />;
   if (authState === 'login') return <LoginPanel onLogin={() => setAuthState('app')} />;
 
   return <div className="cv-app-layout">
     <aside className="cv-sidebar">
       <div className="cv-brand"><div className="cv-brand-mark">⌁</div><div><div className="cv-brand-name">Civic Path Navigator</div><div className="cv-brand-sub">Municipal Bureaucracy Path Visualizer</div></div><span className="cv-pswb">PSWB 02</span></div>
-      <nav className="cv-nav" aria-label="Main navigation">{SIDEBAR_ITEMS.map(item => <button key={item.id} onClick={() => setTab(item.id)} className={`cv-nav-item ${tab === item.id ? 'cv-nav-item-active' : ''}`} aria-current={tab === item.id ? 'page' : undefined}><span className="cv-nav-icon">{item.icon}</span><span>{item.label[lg]}</span></button>)}</nav>
+      <nav className="cv-nav" aria-label="Main navigation">{SIDEBAR_ITEMS.filter((item) => item.id !== 'admin' || isAdmin).map(item => <button key={item.id} onClick={() => setTab(item.id)} className={`cv-nav-item ${tab === item.id ? 'cv-nav-item-active' : ''}`} aria-current={tab === item.id ? 'page' : undefined}><span className="cv-nav-icon">{item.icon}</span><span>{item.label[lg]}</span></button>)}</nav>
       <div className="cv-sidebar-footer"><div className="cv-sidebar-callout"><strong>Smarter. Simpler.<br />More Connected.</strong><p>One place for your civic needs — powered by verified government sources and your DigiLocker.</p></div><button className="cv-nav-item cv-logout" onClick={() => { localStorage.removeItem('civic_token'); setAuthState('landing'); }}>↪ {t.logout}</button></div>
     </aside>
     <main className="cv-main">
