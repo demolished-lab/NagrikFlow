@@ -64,6 +64,7 @@ class TaskMap(SQLModel, table=True):
     content_hash: str = ""  # sha256 of fetched source texts at build/verify
     checked_at: Optional[datetime] = None
     edge_sources: str = "{}"  # JSON map of (src,tgt) -> source URL for provenance
+    created_by: int = 0  # builder user id; 0 = system/seed (admin-curated)
 
 
 class Progress(SQLModel, table=True):

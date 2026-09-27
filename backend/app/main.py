@@ -140,6 +140,12 @@ def _init_db():
     migratemod.migrate(engine)
     from . import nltk_guard as nltkguard
     nltkguard.install()  # pathsec guard for nltk model-artifact APIs (PYSEC-2026-3740)
+    if os.environ.get("RECOVER_JOBS", "1") != "0":
+        try:
+            from . import jobs as jobsmod
+            jobsmod.recover_orphans(engine)  # restart recovery for queued/running jobs
+        except Exception:
+            pass
 
 
 _init_db()
@@ -255,6 +261,12 @@ def otp_request(body: OtpReq):
     with Session(engine) as s:
         u = s.exec(select(User).where(User.email == body.email)).first()
         if u:
+            # single active code: retire previous unused OTPs so they cannot
+            # accumulate (and be brute-forced) inside the 10-minute window
+            for old in s.exec(select(OtpCode).where(
+                    OtpCode.user_id == u.id, OtpCode.used_at.is_(None))).all():
+                old.used_at = datetime.now(timezone.utc)
+                s.add(old)
             code = f"{_secrets.randbelow(900000) + 100000}"
             s.add(OtpCode(user_id=u.id,
                           code_hash=_hl.sha256(code.encode()).hexdigest()))
@@ -280,7 +292,14 @@ def otp_verify(body: OtpVerify):
         u = s.exec(select(User).where(User.email == body.email)).first()
         if not u:
             raise HTTPException(401, "bad code")
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+        now = datetime.now(timezone.utc)
+        if u.locked_until:
+            locked = u.locked_until.replace(tzinfo=timezone.utc) \
+                if u.locked_until.tzinfo is None else u.locked_until
+            if locked > now:
+                raise HTTPException(423, "account locked: too many failed attempts, try later")
+            u.locked_until = None
+        cutoff = now - timedelta(minutes=10)
         cands = s.exec(select(OtpCode).where(
             OtpCode.user_id == u.id, OtpCode.used_at.is_(None))).all()
         good = None
@@ -291,8 +310,15 @@ def otp_verify(body: OtpVerify):
                 good = c0
                 break
         if not good:
+            # per-account attempt limit (IP rate limiting alone is bypassable)
+            u.failed_attempts += 1
+            if u.failed_attempts >= secmod.MAX_FAILS:
+                u.failed_attempts = 0
+                u.locked_until = now + timedelta(seconds=secmod.LOCK_SECONDS)
+            s.add(u)
+            s.commit()
             raise HTTPException(401, "bad code")
-        good.used_at = datetime.now(timezone.utc)
+        good.used_at = now
         u.failed_attempts = 0
         u.locked_until = None
         s.add(good)
@@ -467,9 +493,10 @@ def get_map(
         m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
         if not m:
             raise HTTPException(404, "unknown map")
-        # Allow unverified maps but flag them so the UI can warn the user
-        if not m.verified_at:
-            pass  # continue below; caller checks verified field
+        # Unverified maps are visible only to their builder and admins
+        # (404, not 403, so slugs of unverified maps don't leak existence).
+        if not m.verified_at and not user.is_admin and m.created_by != user.id:
+            raise HTTPException(404, "unknown map")
         graph = json.loads(m.graph_json)
         completed = {p.step_id for p in s.exec(select(Progress).where(
             Progress.user_id == user.id, Progress.map_slug == slug)).all()}
@@ -758,6 +785,68 @@ class VerifyIn(BaseModel):
     verified: bool = True
 
 
+VERIFY_MAX_AGE_DAYS = int(os.environ.get("VERIFY_MAX_AGE_DAYS", "45"))
+
+
+def _graph_error(graph_json: str) -> str | None:
+    """Structural validation for admin verification: parseable, has steps,
+    no dangling edge endpoints, acyclic."""
+    try:
+        g = json.loads(graph_json or "{}")
+    except Exception:
+        return "graph is not valid JSON"
+    nodes = g.get("nodes") or []
+    edges = g.get("edges") or []
+    if not nodes:
+        return "graph has no steps"
+    ids = {str(n.get("id")) for n in nodes if n.get("id") is not None}
+    if not ids:
+        return "graph steps have no ids"
+    for e in edges:
+        if len(e) < 2 or str(e[0]) not in ids or str(e[1]) not in ids:
+            return f"edge references an unknown step: {e!r}"
+    indeg = {i: 0 for i in ids}
+    adj = {i: [] for i in ids}
+    for e in edges:
+        a, b = str(e[0]), str(e[1])
+        adj[a].append(b)
+        indeg[b] += 1
+    stack = [i for i, d in indeg.items() if d == 0]
+    seen = 0
+    while stack:
+        n = stack.pop()
+        seen += 1
+        for nxt in adj[n]:
+            indeg[nxt] -= 1
+            if indeg[nxt] == 0:
+                stack.append(nxt)
+    if seen != len(ids):
+        return "graph contains a cycle"
+    return None
+
+
+def _provenance_error(m) -> str | None:
+    """Fresh-provenance requirement: sources + content hash + recent check."""
+    from datetime import datetime, timedelta, timezone
+    try:
+        urls = json.loads(m.source_urls or "[]")
+    except Exception:
+        urls = []
+    if not urls:
+        return "map has no source_urls"
+    if not m.content_hash:
+        return "map has no content_hash (run a recheck first)"
+    if not m.checked_at:
+        return "map was never checked (run a recheck first)"
+    checked = m.checked_at.replace(tzinfo=timezone.utc) \
+        if m.checked_at.tzinfo is None else m.checked_at
+    age = datetime.now(timezone.utc) - checked
+    if age > timedelta(days=VERIFY_MAX_AGE_DAYS):
+        return (f"provenance is {age.days}d old (limit {VERIFY_MAX_AGE_DAYS}d) "
+                "- run a recheck first")
+    return None
+
+
 @app.post("/admin/maps/{slug}/verify")
 def admin_verify(slug: str, body: VerifyIn, admin: User = Depends(require_admin)):
     from datetime import datetime, timezone
@@ -765,6 +854,10 @@ def admin_verify(slug: str, body: VerifyIn, admin: User = Depends(require_admin)
         m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
         if not m:
             raise HTTPException(404, "unknown map")
+        if body.verified:
+            err = _graph_error(m.graph_json) or _provenance_error(m)
+            if err:
+                raise HTTPException(400, f"cannot verify: {err}")
         m.verified_at = datetime.now(timezone.utc) if body.verified else None
         s.add(m)
         s.commit()
@@ -1007,6 +1100,9 @@ def job_status(job_id: int, admin: User = Depends(require_admin)):
         j = s.get(JobModel, job_id)
         if not j:
             raise HTTPException(404, "unknown job")
+        if jobsmod.fail_if_stale(j):
+            s.add(j)
+            s.commit()
         return {"job_id": j.id, "kind": j.kind, "status": j.status,
                 "result": json.loads(j.result), "finished": j.finished_at}
 
@@ -1103,25 +1199,44 @@ async def build_task(body: "BuildTaskIn", bg: _BT, user: User = Depends(current_
         if existing:
             slug = f"{slug}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     
-    # Discover government sources (task + explicit service category + state)
-    query = " ".join(part for part in
-                     (body.task.strip(), body.service_type.strip(), body.state.strip())
-                     if part)
-    discovered = discovermod.discover(query, max_results=5)
-    urls = [r['url'] for r in discovered[:3] if r.get('url')]
-    
+    # Discover government sources: enriched query first (service category +
+    # state sharpen recall), then the bare task, then the curated catalog so
+    # the build flow never dies just because live search (npx/network) is
+    # unavailable.
+    from . import catalog as catalogmod
+
+    def _discover_urls(q: str) -> list[str]:
+        try:
+            found = discovermod.discover(q, max_results=8)
+        except Exception:
+            return []
+        return [r["url"] for r in found[:5] if r.get("url")]
+
+    bare = body.task.strip()
+    enriched = " ".join(part for part in
+                        (bare, body.service_type.strip(), body.state.strip())
+                        if part)
+    urls = _discover_urls(enriched) if enriched != bare else _discover_urls(bare)
+    if not urls and enriched != bare:
+        urls = _discover_urls(bare)
+    discovery = "search"
+    if not urls:
+        urls = catalogmod.fallback_sources(body.task, body.service_type, body.state)
+        discovery = "catalog"
     if not urls:
         raise HTTPException(400, "No government sources found for this task")
-    
-    # Validate URLs
+
+    # Validate URLs — skip entries the policy gate rejects (it raises
+    # HTTPException, not ValueError; catching only ValueError aborted whole runs)
     valid_urls = []
     for url in urls:
         try:
-            validated = _validate_fetch_url(url)
-            valid_urls.append(validated)
+            valid_urls.append(_validate_fetch_url(url))
+        except HTTPException:
+            continue
         except ValueError:
             continue
-    
+
     if not valid_urls:
         raise HTTPException(400, "No valid government URLs found")
     
@@ -1149,7 +1264,8 @@ async def build_task(body: "BuildTaskIn", bg: _BT, user: User = Depends(current_
         "slug": slug,
         "status": "queued",
         "task": body.task,
-        "urls_found": len(valid_urls)
+        "urls_found": len(valid_urls),
+        "discovery": discovery
     }
 
 
@@ -1164,6 +1280,9 @@ def job_status_public(job_id: int, user: User = Depends(current_user)):
         # Check ownership or admin
         if j.created_by != user.id and not user.is_admin:
             raise HTTPException(403, "not your job")
+        if jobsmod.fail_if_stale(j):
+            s.add(j)
+            s.commit()
         result = json.loads(j.result) if j.result else {}
         return {
             "job_id": j.id,
@@ -1176,12 +1295,13 @@ def job_status_public(job_id: int, user: User = Depends(current_user)):
 
 @app.get("/task/{slug}")
 def get_task_map(slug: str, user: User = Depends(current_user)):
-    """Get any task map by slug (public read after verification)."""
+    """Verified maps: any authenticated user. Unverified: builder + admin only."""
     with Session(engine) as s:
         m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
         if not m:
             raise HTTPException(404, "unknown map")
-        # Allow access to unverified maps during build, but note status
+        if not m.verified_at and not user.is_admin and m.created_by != user.id:
+            raise HTTPException(404, "unknown map")
         return {
             "slug": m.slug,
             "title": m.title,
@@ -1377,18 +1497,28 @@ def account_delete(user: User = Depends(current_user)):
     """Right to erasure: permanently delete account and all associated data."""
     with Session(engine) as s:
         uid = user.id
-        # Delete in FK-safe order
+        # Delete in FK-safe order — every user-linked table (DPDP erasure)
         for row in s.exec(select(VaultItem).where(VaultItem.user_id == uid)).all():
             s.delete(row)
         for row in s.exec(select(Consent).where(Consent.user_id == uid)).all():
             s.delete(row)
         for row in s.exec(select(Progress).where(Progress.user_id == uid)).all():
             s.delete(row)
+        for row in s.exec(select(RoadmapMilestone).where(
+                RoadmapMilestone.user_id == uid)).all():
+            s.delete(row)
+        for row in s.exec(select(Notification).where(
+                Notification.user_id == uid)).all():
+            s.delete(row)
+        for row in s.exec(select(Grievance).where(Grievance.user_id == uid)).all():
+            s.delete(row)
         for row in s.exec(select(OtpCode).where(OtpCode.user_id == uid)).all():
             s.delete(row)
         for row in s.exec(select(LinkCode).where(LinkCode.user_id == uid)).all():
             s.delete(row)
         for row in s.exec(select(OAuthState).where(OAuthState.user_id == uid)).all():
+            s.delete(row)
+        for row in s.exec(select(Job).where(Job.created_by == uid)).all():
             s.delete(row)
         u = s.get(User, uid)
         if u:

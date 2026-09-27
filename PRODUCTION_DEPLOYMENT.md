@@ -59,7 +59,7 @@ DATABASE_URL=postgresql://user:pass@ep-xxx.region.aws.neon.tech/civic_pathfinder
 
 # Test migration
 cd backend
-python -m migrate_pg
+python -m app.migrate_pg
 ```
 
 ### 3. SSL/TLS Configuration
@@ -218,9 +218,13 @@ python -m app.backup run
 ls -la backups/
 python -m app.backup list
 
-# Restore drill (document it):
-#   sqlite: stop app, replace civic.db, start
-#   postgres: createdb civic_new && pg_restore ... && swap DATABASE_URL
+# Restore drill (works on SQLite + Postgres; run with the app STOPPED):
+python -m app.backup list                     # find the snapshot to restore
+python -m app.backup restore backups/civic-20260927-030000.dump
+python -m app.backup restore backups/civic-20260927-030000.db --yes   # sqlite only
+#  backup is validated first (sqlite integrity_check / pg_restore --list)
+#  sqlite  → target file replaced, stale -wal/-shm sidecars removed (needs --yes)
+#  postgres → pg_restore --clean --if-exists into DATABASE_URL (PGPASSWORD env)
 # Schedule: daily (cron/systemd timer), test restore quarterly
 ```
 
@@ -230,8 +234,9 @@ python -m app.backup list
 
 | Job | What it proves |
 |---|---|
-| `backend` | Full pytest suite (81 tests) on SQLite |
+| `backend` | Full pytest suite (99 tests) on SQLite |
 | `backend-pg` | **Full suite on real PostgreSQL 16** (migrations, pg_trgm, pg_dump backup path) |
+| `image` | Backend **Docker image builds** and boots: postgresql-client present, startup migrations run, `/healthz` + `/readyz` answer |
 | `frontend` | `vite build` + `tsc --noEmit` |
 | `deps` | `pip-audit` (nltk PYSEC-2026-3740 tracked as explicit exception — crawl4ai transitive, no fix yet) |
 
@@ -260,10 +265,8 @@ npm ci --prefix frontend
 python -m pytest backend/tests/ -q
 npm run build --prefix frontend
 
-# 4. Migrate database (if Postgres)
-if [[ "$DATABASE_URL" == postgresql* ]]; then
-    python -m migrate_pg
-fi
+# 4. Migrate database (SQLite or Postgres — both work, PG adds pg_trgm indexes)
+(cd backend && python -m app.migrate_pg)
 
 # 5. Restart service
 sudo systemctl restart civic-pathfinder

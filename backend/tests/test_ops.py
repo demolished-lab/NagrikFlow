@@ -43,3 +43,45 @@ def test_backup_roundtrip_to_tmpdir(tmp_path, client, admin):
     H = admin["headers"]
     assert client.post("/admin/backup", headers=H).status_code in (200, 500)
     assert isinstance(client.get("/admin/backups", headers=H).json(), list)
+
+
+def test_backup_validate_and_restore(tmp_path):
+    import pytest
+    from pathlib import Path
+
+    from sqlalchemy import create_engine
+    from sqlmodel import SQLModel
+
+    from app import backup as B
+    from app import models  # noqa: F401  (register all tables)
+
+    db = tmp_path / "target.db"
+    url = f"sqlite:///{db.as_posix()}"
+    engine = create_engine(url)
+    SQLModel.metadata.create_all(engine)
+
+    out = B.run(engine, dest_dir=tmp_path)
+    backup_file = Path(out["file"])
+    assert backup_file != db
+    assert B.validate(backup_file)["valid"] is True
+
+    # corrupt files must never pass validation
+    bad = tmp_path / "civic-19990101-000000.db"
+    bad.write_bytes(b"this is not a database")
+    assert B.validate(bad)["valid"] is False
+
+    # an existing target requires explicit confirmation
+    db.write_bytes(b"corrupted-but-present")
+    engine.dispose()
+    with pytest.raises(RuntimeError, match="confirm"):
+        B.restore(engine, backup_file, confirm=False)
+
+    r = B.restore(engine, backup_file, confirm=True)
+    assert r["restored"] is True and r["valid"] is True
+    with sqlite3.connect(db) as c:
+        tables = {row[0] for row in c.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "taskmap" in tables and "user" in tables
+
+    with pytest.raises(FileNotFoundError):
+        B.restore(engine, tmp_path / "missing.db", confirm=True)

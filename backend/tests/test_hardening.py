@@ -1,20 +1,36 @@
 """Regression coverage for the production hardening pass."""
 import json
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 
-def test_unverified_maps_are_served_with_flag(client, user):
+def test_unverified_maps_are_visible_to_builder_and_admin_only(client, user,
+                                                               admin):
     from app import main as M
-    from app.models import TaskMap
+    from app.models import TaskMap, User
 
     with Session(M.engine) as s:
-        s.add(TaskMap(slug="draft-map", title="Draft", graph_json=json.dumps({"nodes": [], "edges": []})))
+        who = s.exec(select(User).where(User.email == user["email"])).first()
+        s.add(TaskMap(slug="draft-map", title="Draft", created_by=who.id,
+                      graph_json=json.dumps({"nodes": [], "edges": []})))
         s.commit()
-    response = client.get("/maps/draft-map", headers=user["headers"])
-    assert response.status_code == 200
-    data = response.json()
-    assert data["verified"] is False
+
+    # the builder reads their own unverified draft, flagged unverified
+    r = client.get("/maps/draft-map", headers=user["headers"])
+    assert r.status_code == 200
+    assert r.json()["verified"] is False
+
+    # admins read every map
+    assert client.get("/maps/draft-map",
+                      headers=admin["headers"]).status_code == 200
+
+    # an unrelated authenticated user gets 404 (no existence leak)
+    stranger = client.post("/auth/register",
+                           json={"email": "stranger-scoping@t.co",
+                                 "password": "pw123456"}).json()
+    r = client.get("/maps/draft-map",
+                   headers={"Authorization": f"Bearer {stranger['token']}"})
+    assert r.status_code == 404
 
 
 def test_progress_requires_a_real_step(client, user):

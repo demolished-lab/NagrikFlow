@@ -48,6 +48,7 @@ export default function App() {
   const [route, setRoute] = useState<Route>(() => routeFromHash());
   const [lg, setLg] = useState<Lang>(lang());
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [search, setSearch] = useState('');
   const [profileMenu, setProfileMenu] = useState(false);
@@ -67,7 +68,7 @@ export default function App() {
     }).catch(() => {
       setProfile(null);
       setIsAdmin(false);
-    });
+    }).finally(() => setProfileLoaded(true));
   }, [authState, token]);
 
   const navigateTo: Navigate = (tab, slug) => {
@@ -88,6 +89,7 @@ export default function App() {
     localStorage.removeItem('civic_token');
     setToken('');
     setProfile(null);
+    setProfileLoaded(false);
     setIsAdmin(false);
     setProfileMenu(false);
     navigateTo('home');
@@ -159,10 +161,24 @@ export default function App() {
         {route.tab === 'roadmap' && <Roadmap slug={route.slug || ''} onBack={() => navigateTo('pathways')} />}
         {route.tab === 'documents' && <Dashboard />}
         {route.tab === 'help' && <HelpView onBuildPath={() => navigateTo('home')} />}
-        {route.tab === 'agent' && isAdmin && <AgentPanel />}
-        {route.tab === 'admin' && isAdmin && <Admin />}
+        {route.tab === 'agent' && (isAdmin
+          ? <AgentPanel />
+          : <RestrictedView label="Research agent" loaded={profileLoaded} onHome={() => navigateTo('home')} />)}
+        {route.tab === 'admin' && (isAdmin
+          ? <Admin />
+          : <RestrictedView label="Review desk" loaded={profileLoaded} onHome={() => navigateTo('home')} />)}
       </div>
     </main>
+  </div>;
+}
+
+function RestrictedView({ label, loaded, onHome }: { label: string; loaded: boolean; onHome: () => void }) {
+  if (!loaded) return <div className="cv-page-state" role="status">Checking your access…</div>;
+  return <div className="cv-empty-card" role="alert">
+    <span className="cv-empty-icon" aria-hidden="true">403</span>
+    <h2>Administrator access required</h2>
+    <p>{label} is limited to administrator accounts, and your account does not have access. If you think this is a mistake, ask an administrator to update your role.</p>
+    <button className="cv-btn cv-btn-indigo" onClick={onHome}>Back to home</button>
   </div>;
 }
 

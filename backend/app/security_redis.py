@@ -39,12 +39,16 @@ def reset() -> None:
 
 
 class RedisStore:
-    """Sliding-window limiter shared by all workers. Fail-open on Redis errors
-    (availability over strictness; per-process memory limiting still applies
-    only when Redis is entirely unconfigured)."""
+    """Sliding-window limiter shared by all workers.
 
-    def __init__(self, client):
+    On Redis errors: degrade to the in-process MemoryStore fallback so
+    limiting stays active (per-process precision, no full bypass). Set
+    RATE_LIMIT_FAIL_CLOSED=1 to reject instead — strictest mode for
+    deployments that prefer 429s over weakened limits during a Redis outage."""
+
+    def __init__(self, client, fallback=None):
         self.r = client
+        self._fallback = fallback
 
     def allow(self, ip: str, prefix: str, max_hits: int, window: int) -> bool:
         key = f"rate:{ip}:{prefix}"
@@ -63,5 +67,10 @@ class RedisStore:
             pipe.execute()
             return True
         except Exception:
-            return True  # Redis down -> fail open (memory limiter is bypassed;
-            # alert on Redis health via /readyz instead)
+            if os.environ.get("RATE_LIMIT_FAIL_CLOSED", "").strip() \
+                    .lower() in ("1", "true", "yes"):
+                return False
+            if self._fallback is None:
+                from .security import MemoryStore
+                self._fallback = MemoryStore()
+            return self._fallback.allow(ip, prefix, max_hits, window)

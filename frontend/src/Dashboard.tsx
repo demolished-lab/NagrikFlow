@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from './api';
 import { STR, lang } from './i18n';
+import type { PathwaySummary } from './types';
 
 type MapSummary = { title?: string; graph?: { nodes?: { id: string }[] } };
 
@@ -15,23 +16,55 @@ export default function Dashboard() {
   const [unread, setUnread] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState('');
+  const [pathways, setPathways] = useState<PathwaySummary[]>([]);
+  const [slug, setSlug] = useState('');
+  const [slugChosen, setSlugChosen] = useState(false);
+  const [mapErr, setMapErr] = useState('');
 
   useEffect(() => {
-    Promise.all([api.dashboard(), api.brief(), api.map('udyam-register'), api.progress('udyam-register'), api.milestones('udyam-register'), api.notifications()])
-      .then(([data, briefData, mapData, progressData, milestoneData, notificationData]) => {
+    Promise.all([api.dashboard(), api.brief(), api.notifications()])
+      .then(([data, briefData, notificationData]) => {
         setD(data);
         setBrief(briefData);
-        setMap(mapData);
-        setCompleted(progressData.steps || []);
-        setMilestones(milestoneData.milestones || []);
         setNotifications(notificationData.notifications || []);
         setUnread(notificationData.unread || 0);
       })
       .catch((error) => setErr(String(error.message || error)));
+    // the tracked pathway comes from the citizen's own saved pathways —
+    // never a hard-coded map slug
+    api.myPathways()
+      .then((pathwayData: PathwaySummary[]) => {
+        const list = pathwayData || [];
+        setPathways(list);
+        const first = list.find((p) => p.slug && p.status !== 'failed');
+        if (first) setSlug(first.slug);
+        setSlugChosen(true);
+      })
+      .catch(() => {
+        setPathways([]);
+        setSlugChosen(true);
+      });
   }, []);
 
+  useEffect(() => {
+    if (!slugChosen || !slug) return;
+    setMapErr('');
+    Promise.all([api.map(slug), api.progress(slug), api.milestones(slug)])
+      .then(([mapData, progressData, milestoneData]) => {
+        setMap(mapData);
+        setCompleted(progressData.steps || []);
+        setMilestones(milestoneData.milestones || []);
+      })
+      .catch((error) => {
+        setMap(null);
+        setCompleted([]);
+        setMilestones([]);
+        setMapErr(String(error.message || error));
+      });
+  }, [slug, slugChosen]);
+
   if (err) return <div className="cv-api-error" role="alert">{err}</div>;
-  if (!d) return <div className="cv-page-state" aria-live="polite">{t.loading}</div>;
+  if (!d || !slugChosen) return <div className="cv-page-state" aria-live="polite">{t.loading}</div>;
 
   const totalSteps = map?.graph?.nodes?.length || 0;
   const progressPercent = totalSteps ? Math.round((completed.length / totalSteps) * 100) : 0;
@@ -66,12 +99,24 @@ export default function Dashboard() {
   return <div className="cv-dashboard-view cv-anim-up">
     <header className="cv-welcome-banner"><span className="cv-eyebrow">YOUR CIVIC ACCOUNT</span><h1>{d.user?.name ? `Welcome back, ${d.user.name}` : (t.welcomeBack || 'Welcome back')}</h1><p className="cv-welcome-sub">{brief?.brief || t.briefDesc || 'Here is your personalized plain-words brief.'}</p></header>
 
-    <section className="cv-progress-summary" aria-label="Personalized roadmap progress">
-      <div className="cv-progress-summary-head"><div><span className="cv-eyebrow">YOUR PERSONAL PROGRESS</span><h2>{map?.title || 'Udyam registration roadmap'}</h2></div><strong>{progressPercent}%</strong></div>
-      <div className="cv-progress-track"><span style={{ width: `${progressPercent}%` }}/></div>
-      <div className="cv-progress-summary-foot"><span>{completed.length} of {totalSteps || '—'} steps completed</span><span>{inProgress.length ? `${inProgress.length} active path${inProgress.length === 1 ? '' : 's'}` : 'Start a verified path to track progress'}</span></div>
-      <button className="cv-report-button" type="button" onClick={() => void downloadReport()} disabled={exporting}>{exporting ? 'Preparing PDF…' : 'Download progress report'}</button>
-    </section>
+    {slugChosen && !slug ? (
+      <section className="cv-progress-summary" aria-label="Personalized roadmap progress">
+        <div className="cv-progress-summary-head"><div><span className="cv-eyebrow">YOUR PERSONAL PROGRESS</span><h2>No pathway yet</h2></div></div>
+        <p className="cv-empty">Describe a civic task and we will build your pathway — its steps, sources and progress will appear here.</p>
+        <button className="cv-btn cv-btn-indigo" type="button" onClick={() => { window.location.hash = ''; }}>Build your first pathway</button>
+      </section>
+    ) : (
+      <section className="cv-progress-summary" aria-label="Personalized roadmap progress">
+        <div className="cv-progress-summary-head"><div><span className="cv-eyebrow">YOUR PERSONAL PROGRESS</span>
+          <h2>{map?.title || pathways.find((p) => p.slug === slug)?.title || 'Your pathway progress'}</h2>
+          {pathways.filter((p) => p.slug).length > 1 && <select className="cv-pathway-select" value={slug} onChange={(event) => setSlug(event.target.value)} aria-label="Choose which pathway to track">{pathways.filter((p) => p.slug).map((p) => <option key={p.slug} value={p.slug}>{p.title || p.slug}</option>)}</select>}
+        </div><strong>{progressPercent}%</strong></div>
+        <div className="cv-progress-track"><span style={{ width: `${progressPercent}%` }}/></div>
+        <div className="cv-progress-summary-foot"><span>{completed.length} of {totalSteps || '—'} steps completed</span><span>{inProgress.length ? `${inProgress.length} active path${inProgress.length === 1 ? '' : 's'}` : 'Start a verified path to track progress'}</span></div>
+        {mapErr && <p className="cv-inline-error" role="alert">{mapErr}</p>}
+        <button className="cv-report-button" type="button" onClick={() => void downloadReport()} disabled={exporting}>{exporting ? 'Preparing PDF…' : 'Download progress report'}</button>
+      </section>
+    )}
 
     {milestones.length > 0 && <section className="cv-milestone-section" aria-label="Active roadmap milestones"><div className="cv-section-heading"><div><span className="cv-eyebrow">ACTIVE MILESTONES</span><h2>Deadline tracker</h2></div><span className="cv-milestone-count">{milestones.filter((item) => item.status !== 'completed').length} open</span></div><div className="cv-milestone-grid">{milestones.map((item) => <article className={`cv-milestone-card ${item.status === 'completed' ? 'complete' : item.days_left < 0 ? 'overdue' : ''}`} key={item.step_id}><span className="cv-milestone-icon" aria-hidden="true">{item.status === 'completed' ? '✓' : item.days_left < 0 ? '!' : '◷'}</span><div><strong>{item.title}</strong><p>{item.status === 'completed' ? 'Completed and synced' : item.days_left < 0 ? `${Math.abs(item.days_left)} days overdue` : `Due in ${item.days_left} days`}</p></div><time>{item.due_at ? item.due_at.slice(0, 10) : '—'}</time></article>)}</div></section>}
 

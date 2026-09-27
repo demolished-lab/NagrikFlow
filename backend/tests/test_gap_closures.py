@@ -264,6 +264,7 @@ def test_build_map_nodes_carry_link(monkeypatch):
 # ---------------- Gap 3: per-step admin editing ----------------
 
 def _seed_edit_map(slug="edit-map", edge_sources=None):
+    from datetime import datetime, timezone
     from sqlmodel import Session
     from app import main as M
     from app.models import TaskMap
@@ -285,7 +286,9 @@ def _seed_edit_map(slug="edit-map", edge_sources=None):
         s.add(TaskMap(slug=slug, title="Edit map",
                       graph_json=json.dumps(graph),
                       edge_sources=json.dumps(edge_sources or {"a|b": "https://x.gov.in"}),
-                      source_urls="[]"))
+                      source_urls=json.dumps(["https://source.gov.in/page"]),
+                      content_hash="seed-test-hash",
+                      checked_at=datetime.now(timezone.utc)))
         s.commit()
 
 
@@ -472,7 +475,8 @@ def test_build_task_carries_service_type(client, user, monkeypatch):
                           city=payload.get("city", ""), state=payload.get("state", ""),
                           service_type=payload.get("service_type", ""),
                           graph_json='{"nodes": [], "edges": []}',
-                          source_urls="[]", edge_sources="{}"))
+                          source_urls="[]", edge_sources="{}",
+                          created_by=job.created_by))
             job.status = "done"
             job.result = json.dumps({"slug": payload["slug"]})
             s.add(job)

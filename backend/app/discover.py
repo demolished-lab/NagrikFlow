@@ -17,8 +17,12 @@ GOV_HINTS = (".gov.in", ".nic.in", "gst.gov.in", "mca.gov.in")
 
 
 def _run(*args: str) -> dict:
-    out = subprocess.run([*WIGOLO, *args, "--json"], capture_output=True,
-                         text=True, timeout=TIMEOUT, shell=False, check=False)
+    try:
+        out = subprocess.run([*WIGOLO, *args, "--json"], capture_output=True,
+                             text=True, timeout=TIMEOUT, shell=False,
+                             check=False)
+    except (OSError, subprocess.SubprocessError) as ex:
+        return {"error": f"wigolo unavailable: {ex}"[:300]}
     txt = (out.stdout or "").strip()
     try:
         return json.loads(txt[txt.index("{"):txt.rindex("}") + 1])
@@ -39,6 +43,8 @@ def discover(task: str, max_results: int = 8) -> list[dict]:
 
 def fetch_text(url: str) -> str:
     """Keyless tiered fetch (auto-escalates to headless on bot walls)."""
+    from .worker import _require_public
+    _require_public(url)  # SSRF guard: this path serves agent-supplied URLs
     res = _run("fetch", url)
     md = (res.get("markdown", "") or res.get("text", "") or "").strip()
     if len(md) < 40:

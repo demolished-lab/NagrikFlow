@@ -39,6 +39,8 @@ def _ensure_columns(engine):
             stmts.append("ALTER TABLE taskmap ADD COLUMN edge_sources TEXT DEFAULT ''")
         if "service_type" not in thave:
             stmts.append("ALTER TABLE taskmap ADD COLUMN service_type VARCHAR DEFAULT ''")
+        if "created_by" not in thave:
+            stmts.append("ALTER TABLE taskmap ADD COLUMN created_by INTEGER DEFAULT 0")
     except Exception:
         pass
     if stmts:
@@ -53,6 +55,11 @@ def m001_base(engine):
     _ensure_columns(engine)
 
 
+def _seed_graph_hash(graph_json: str) -> str:
+    import hashlib
+    return hashlib.sha256(graph_json.encode("utf-8")).hexdigest()
+
+
 def m002_seed_udyam(engine):
     import json
     from pathlib import Path
@@ -61,10 +68,13 @@ def m002_seed_udyam(engine):
     with Session(engine) as s:
         if not s.exec(select(TaskMap).where(TaskMap.slug == "udyam-register")).first():
             d = json.loads(seed.read_text())
+            graph_json = json.dumps({"nodes": d["nodes"], "edges": d["edges"]})
             s.add(TaskMap(slug=d["slug"], title=d["title"], city=d["city"],
-                          graph_json=json.dumps({"nodes": d["nodes"], "edges": d["edges"]}),
+                          graph_json=graph_json,
                           source_urls=json.dumps(d["source_urls"]),
-                          verified_at=datetime.now(timezone.utc)))
+                          verified_at=datetime.now(timezone.utc),
+                          content_hash=_seed_graph_hash(graph_json),
+                          checked_at=datetime.now(timezone.utc)))
             s.commit()
 
 
@@ -90,8 +100,30 @@ def m006_service_type(engine):
     _ensure_columns(engine)
 
 
+def m007_seed_provenance(engine):
+    """Backfill curated-seed provenance (content_hash + checked_at) so the
+    admin verify gates pass on DBs seeded before m002 carried it. checked_at =
+    migration time = the moment this curation was stamped; a later recheck
+    replaces it with a real fetch timestamp."""
+    from app.models import TaskMap
+    with Session(engine) as s:
+        m = s.exec(select(TaskMap).where(TaskMap.slug == "udyam-register")).first()
+        if not m:
+            return
+        changed = False
+        if not m.content_hash:
+            m.content_hash = _seed_graph_hash(m.graph_json or "")
+            changed = True
+        if not m.checked_at:
+            m.checked_at = datetime.now(timezone.utc)
+            changed = True
+        if changed:
+            s.add(m)
+            s.commit()
+
+
 MIGRATIONS = [m001_base, m002_seed_udyam, m003_security_jobs, m004_oauth_state,
-              m005_grievances, m006_service_type]
+              m005_grievances, m006_service_type, m007_seed_provenance]
 
 # Optionally add PostgreSQL-specific migrations
 _DB_URL = os.environ.get("DATABASE_URL", "sqlite:///./civic.db")

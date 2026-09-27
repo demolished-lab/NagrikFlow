@@ -18,6 +18,7 @@ os.environ["DATABASE_URL"] = "sqlite:///./t_sim.db"
 os.environ["ALLOW_DEV_SECRET"] = "1"
 os.environ["CIVIC_DEV"] = "1"
 os.environ["LINK_PROBE"] = "0"  # offline sim: no reachability probes
+os.environ["SSRF_PROBE"] = "0"  # offline sim: fixture gov page served on localhost
 os.environ["DIGILOCKER_API_BASE"] = "http://localhost:8001"
 os.environ["DIGILOCKER_SSO_BASE"] = "http://localhost:8001/sso"
 for f in ("t_sim.db",):

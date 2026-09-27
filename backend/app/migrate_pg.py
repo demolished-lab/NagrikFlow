@@ -54,3 +54,20 @@ def m005_postgres(engine):
         except Exception:
             pass
 
+
+if __name__ == "__main__":
+    # python -m app.migrate_pg  (run from backend/)
+    # Applies the full versioned migration set for DATABASE_URL; on Postgres
+    # that includes m005_postgres above (SQLite DBs run the base migrations).
+    import os as _os
+    from sqlmodel import create_engine as _create_engine
+    from app.migrate import migrate as _migrate
+
+    _url = _os.environ.get("DATABASE_URL", "sqlite:///./civic.db")
+    _kw = {"connect_args": {"check_same_thread": False}} \
+        if _url.startswith("sqlite") else {}
+    _engine = _create_engine(_url, **_kw)
+    _migrate(_engine)
+    _target = _url.split("@")[-1]
+    print(f"migrations applied -> {_target}")
+

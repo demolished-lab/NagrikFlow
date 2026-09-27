@@ -36,6 +36,31 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
       - run: pip install -r backend/requirements.txt pytest httpx fakeredis
       - run: python -m pytest backend/tests/ -q
+  image:
+    # Build the backend container and smoke-test it (Dockerfile changes,
+    # postgresql-client install, startup migrations, /healthz + /readyz).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t civic-backend:${{ github.sha }} backend
+      - name: Smoke test /healthz and /readyz
+        run: |
+          docker run -d --name civic -p 8000:8000 \
+            -e ALLOW_DEV_SECRET=1 -e DATABASE_URL=sqlite:///./civic.db \
+            civic-backend:${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/healthz; then
+              echo " healthy after ${i} tries"
+              curl -fsS http://localhost:8000/readyz
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::/healthz never became healthy"
+          docker logs civic
+          exit 1
+      - if: always()
+        run: docker rm -f civic || true
   frontend:
     runs-on: ubuntu-latest
     steps:

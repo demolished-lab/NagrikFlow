@@ -31,15 +31,36 @@ def _ok(text: str) -> str:
     return text
 
 
+def _require_public(url: str) -> None:
+    """SSRF entry guard for every fetch tier: http(s) only, never a private/
+    loopback/link-local target (DNS failure stays indeterminate and is left
+    to the fetch itself; explicit non-public resolution is blocked).
+
+    SSRF_PROBE=0 disables the private-target check only (scheme check stays) —
+    an explicit dev/sim opt-out for localhost fixture servers, mirroring
+    LINK_PROBE. Default is ON in production."""
+    if not (url or "").lower().startswith(("http://", "https://")):
+        raise RuntimeError("ssrf: non-http scheme")
+    if os.environ.get("SSRF_PROBE", "1") == "0":
+        return
+    if _probe_target_ok(url) is False:
+        raise RuntimeError("ssrf: non-public target")
+
+
 def fetch_tier1(url: str) -> str:
-    dl = trafilatura.fetch_url(url, no_ssl=False)
-    if not dl:
-        raise RuntimeError("tier1 empty")
+    _require_public(url)
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    opener = urllib.request.build_opener(_GuardedRedirect)
+    with opener.open(req, timeout=25) as resp:
+        data = resp.read(2_000_000)
+        charset = resp.headers.get_content_charset() or "utf-8"
+    dl = data.decode(charset, errors="replace")
     text = trafilatura.extract(dl, include_links=True) or ""
     return _ok(text)
 
 
 def fetch_tier2(url: str) -> str:
+    _require_public(url)
     from crawl4ai import AsyncWebCrawler
     import asyncio
 
@@ -52,6 +73,7 @@ def fetch_tier2(url: str) -> str:
 
 
 def fetch_tier3(url: str) -> str:
+    _require_public(url)
     import os
     exe = os.path.expanduser("~/.obscura/obscura.exe")
     out = subprocess.run([exe, "fetch", url, "--dump", "text"],
@@ -62,6 +84,7 @@ def fetch_tier3(url: str) -> str:
 
 def cascade_fetch(url: str) -> tuple[str, str]:
     """Return (text, tier_used). Raises if all tiers fail."""
+    _require_public(url)
     for name, fn in (("trafilatura", fetch_tier1), ("crawl4ai", fetch_tier2),
                      ("obscura", fetch_tier3)):
         try:
@@ -79,9 +102,19 @@ def cascade_fetch(url: str) -> tuple[str, str]:
 FEE_RE = re.compile(r"(?:fee|fees|charge|cost|Rs\.?|₹)\s*[:\-]?\s*([₹Rs\.\s]*\d[\d,]*)", re.I)
 DOC_RE = re.compile(r"\b(Aadhaar|PAN|passport|ration card|birth certificate|address proof|bank (?:statement|passbook)|photograph|Form\s*\d*[A-Z]*)\b", re.I)
 URL_RE = re.compile(r"https?://[^\s\]\)\"'<>]+", re.I)
-LINK_HINTS = ("form", "apply", "register", "pay", "payment", "download",
-              "renew", "certif", "licen", "application", "applyfor")
+LINK_HINTS = ("form", "apply", "register", "registration", "pay", "payment",
+              "download", "renew", "certif", "licen", "application", "applyfor")
 DOC_LINK_HINTS = ("form", "doc", "download", "certificate", "checklist", "template")
+BAD_LINK_HINTS = ("grievance", "complaint", "assist", "feedback", "contact",
+                  "helpdesk", "helpline", "faq", "charter", "enquiry",
+                  "inquiry", "ticket", "support", "suggestion", "champions")
+NO_DOCS_RE = re.compile(
+    r"(?:\bno\b[^.]{0,40}\b(?:documents?|proof|copies|papers)\b"
+    r"|\bpaperless\b"
+    r"|\bwithout\b[^.]{0,30}\b(?:documents?|proof)\b"
+    r"|\bnothing to (?:upload|submit)\b"
+    r"|\bnot require\b[^.]{0,30}\b(?:documents?|proof)\b)",
+    re.I)
 
 
 def _url_host(u: str) -> str:
@@ -112,21 +145,39 @@ def clean_link(link: str, source_url: str) -> str:
 
 
 def pick_link(text: str, source_url: str, hints=LINK_HINTS) -> str:
-    """Best official deep link mentioned in fetched page text (same-host or
-    gov domain), preferring URLs whose path matches the given hints."""
+    """Best application deep link from fetched page text.
+
+    Same-host beats cross-host; hints match path+query only (not hostname);
+    help/complaint/grievance pages are never eligible (they out-score real
+    forms on raw substrings); cross-host needs positive path evidence."""
     src_host = _url_host(source_url)
-    best, best_score = "", -1
+    best, best_score = "", -999
     for raw in URL_RE.findall(text or ""):
         cand = raw.rstrip(".,;:'\")")
         host = _url_host(cand)
         if not host or (host != src_host and not _govish(host)):
             continue
-        score = sum(2 for hint in hints if hint in cand.lower())
+        low = cand.lower()
+        if any(bad in low for bad in BAD_LINK_HINTS):
+            continue
+        try:
+            p = urlparse(cand)
+            pathq = f"{p.path or ''}?{p.query or ''}".lower()
+        except Exception:
+            pathq = low
+        score = 0
+        for hint in hints:
+            if hint in pathq:
+                score += 2
         if host == src_host:
-            score += 1
+            score += 3
+        elif not pathq.strip("/?"):
+            score -= 2  # cross-domain bare root: weak evidence
+        else:
+            score -= 1  # cross-domain must earn it with path hints
         if score > best_score:
             best, best_score = cand, score
-    return best
+    return best if best_score > 0 else ""
 
 
 def page_has_link(link: str, text: str) -> bool:
@@ -197,7 +248,8 @@ class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
     must not be able to bounce the probe onto 169.254.169.254/RFC1918)."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if _probe_target_ok(newurl) is not True:
+        if os.environ.get("SSRF_PROBE", "1") != "0" \
+                and _probe_target_ok(newurl) is not True:
             raise _BadRedirect(newurl)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
@@ -218,6 +270,10 @@ def heuristic_extract(text: str, url: str) -> list[dict]:
     """Zero-LLM fallback: fees + document mentions + official links -> steps."""
     fees = sorted(set(FEE_RE.findall(text)))[:5]
     docs = sorted(set(m.group(1) for m in DOC_RE.finditer(text)))[:10]
+    # "paperless / no documents to upload" pages (e.g. Udyam) must not get a
+    # fabricated document-gathering step just because PAN is mentioned in prose
+    if docs and NO_DOCS_RE.search(text or ""):
+        docs = []
     doc_link = pick_link(text, url, DOC_LINK_HINTS)
     app_link = pick_link(text, url, LINK_HINTS)
     steps = []

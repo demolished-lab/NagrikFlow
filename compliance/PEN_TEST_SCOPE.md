@@ -49,7 +49,7 @@ flows, frontend on Cloudflare Pages)
 - Test deployment with seeded demo maps (`backend/sim`), test admin account
   in `ADMIN_EMAILS`, seeded rate-limit counters observable via
   `/admin/security` + `/metrics`.
-- Current automated baseline: `pytest` suite (81 tests) green in CI — the
+- Current automated baseline: `pytest` suite (99 tests) green in CI — the
   report should reference regressions against it.
 
 ## Deliverable checklist

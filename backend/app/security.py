@@ -2,8 +2,10 @@
 
 Store selection: REDIS_URL set -> shared Redis store (safe across multiple
 gunicorn workers / instances); otherwise single-process memory store.
-Same limits and key format either way; Redis failures fail open (log, allow)
-so an outage degrades to per-process limiting instead of taking the app down.
+Same limits and key format either way. Redis runtime errors degrade to the
+in-process MemoryStore (limits stay enforced, per-process precision) —
+never a full bypass. Set RATE_LIMIT_FAIL_CLOSED=1 to reject requests
+outright during a Redis outage instead.
 """
 import os
 import time
@@ -67,7 +69,8 @@ def _get_store():
             try:
                 from .security_redis import RedisStore, get_client
                 client = get_client()
-                _store = RedisStore(client) if client else MemoryStore()
+                _store = RedisStore(client, fallback=MemoryStore()) \
+                    if client else MemoryStore()
             except Exception:
                 _store = MemoryStore()
         else:
