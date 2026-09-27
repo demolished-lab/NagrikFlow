@@ -14,7 +14,7 @@ import type { UserProfile } from './types';
 
 type Tab = 'home' | 'pathways' | 'documents' | 'help' | 'roadmap' | 'agent' | 'admin';
 type BaseTab = Exclude<Tab, 'roadmap'>;
-type AuthState = 'landing' | 'login' | 'app';
+type AuthState = 'landing' | 'login' | 'register' | 'app';
 type Route = { tab: Tab; slug?: string };
 type Navigate = (tab: BaseTab | 'roadmap', slug?: string) => void;
 
@@ -104,8 +104,8 @@ export default function App() {
     setSearch('');
   };
 
-  if (authState === 'landing') return <LandingPage onLogin={() => setAuthState('login')} />;
-  if (authState === 'login') return <LoginPanel onLogin={onLogin} />;
+  if (authState === 'landing') return <LandingPage onLogin={() => setAuthState('login')} onRegister={() => setAuthState('register')} />;
+  if (authState === 'login' || authState === 'register') return <LoginPanel key={authState} initialMode={authState === 'register' ? 'register' : 'login'} onLogin={onLogin} />;
 
   const profileName = profile?.name || profile?.email?.split('@')[0] || 'Your account';
   const initials = profileName.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') || 'C';

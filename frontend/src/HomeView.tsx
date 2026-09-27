@@ -95,6 +95,15 @@ export default function HomeView({ profile, onNavigate }: Props) {
       sessionStorage.removeItem('civic_task_prefill');
       window.setTimeout(() => taskInputRef.current?.focus(), 0);
     }
+    const locationPrefill = sessionStorage.getItem('civic_location_prefill');
+    if (locationPrefill) {
+      try {
+        const location = JSON.parse(locationPrefill) as { city?: string; state?: string };
+        if (location.city) setCity(location.city);
+        if (location.state) setState(location.state);
+      } catch { /* Ignore invalid transient guest-form data. */ }
+      sessionStorage.removeItem('civic_location_prefill');
+    }
     window.addEventListener('civic:pathways-updated', refresh);
     window.addEventListener('civic:search-task', applySearch);
     return () => {

@@ -73,6 +73,40 @@ async function mockAuthenticatedApi(page: import('@playwright/test').Page) {
   });
 }
 
+test('public root presents the concierge reference and preserves task and location through sign-in', async ({ page }) => {
+  await page.route('**/api/auth/login', async (route) => {
+    await route.fulfill({ json: { token: 'e2e-auth-token', user_id: 7 } });
+  });
+  await page.route('**/api/me/profile', async (route) => {
+    await route.fulfill({ json: { id: 7, email: 'citizen@example.com', name: 'Test Citizen', city: 'Hyderabad', state: 'Telangana', role: 'citizen' } });
+  });
+  await page.route('**/api/me/pathways', async (route) => route.fulfill({ json: [] }));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'What do you need to get done?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Example pathway' })).toBeVisible();
+  await expect(page.getByText('Preview only')).toBeVisible();
+  await page.getByLabel('Describe your civic task').fill('Get a water connection');
+  await page.getByLabel('City').fill('Pune');
+  await page.getByLabel('State').fill('Maharashtra');
+  await page.getByRole('button', { name: 'Build my pathway' }).first().click();
+  await expect(page.getByLabel('Email')).toBeVisible();
+  await page.getByLabel('Email').fill('citizen@example.com');
+  await page.getByLabel('Password').fill('correct-horse-battery-staple');
+  await page.getByRole('button', { name: 'Login' }).last().click();
+  await expect(page.getByRole('heading', { name: 'What do you need to get done?' })).toBeVisible();
+  await expect(page.getByLabel('Describe your civic task')).toHaveValue('Get a water connection');
+  await expect(page.getByLabel('City')).toHaveValue('Pune');
+  await expect(page.getByLabel('State')).toHaveValue('Maharashtra');
+  await expect(page.evaluate(() => localStorage.getItem('civic_token'))).resolves.toBe('e2e-auth-token');
+});
+
+test('register shortcut opens account registration mode', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Register' }).first().click();
+  await expect(page.getByLabel('Name')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Register' }).last()).toBeVisible();
+});
+
 test('user can authenticate and reach the personalized concierge home', async ({ page }) => {
   await page.route('**/api/auth/login', async (route) => {
     await route.fulfill({ json: { token: 'e2e-auth-token', user_id: 7 } });
