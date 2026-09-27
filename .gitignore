@@ -17,3 +17,6 @@ frontend/dist/
 *.log
 *.err
 .DS_Store
+
+# test artifacts
+frontend/test-results/
