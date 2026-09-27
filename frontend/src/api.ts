@@ -34,6 +34,11 @@ export const api = {
   progressReport: () => fetch(`${API}/me/progress-report.pdf`, { headers: headers() }),
   telegramLinkCode: () => req('/me/telegram/link-code', { method: 'POST' }),
   dlConnect: () => req('/auth/digilocker/connect'),
+  // Build task (dynamic civic path generation)
+  buildTask: (task: string, city?: string, state?: string) =>
+    req('/build-task', { method: 'POST', body: JSON.stringify({ task, city, state }) }),
+  jobStatus: (jobId: number) => req(`/jobs/${jobId}`),
+  taskMap: (slug: string) => req(`/task/${slug}`),
   // Agent API
   agentRun: (task: string, mode: string, budget: number) =>
     req('/agent/run', { method: 'POST', body: JSON.stringify({ task, mode, budget }) }),

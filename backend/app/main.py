@@ -745,18 +745,120 @@ def admin_backups(admin: User = Depends(require_admin)):
     return backupmod.listing()
 
 
+class BuildTaskIn(BaseModel):
+    task: str
+    city: str = ""
+    state: str = ""
+
+
 class DiscoverIn(BaseModel):
     task: str
     max_results: int = 8
 
 
-@app.post("/admin/discover")
-def admin_discover(body: DiscoverIn, admin: User = Depends(require_admin)):
-    """Keyless gov-URL discovery (wigolo) — feeds /admin/jobs/build."""
+@app.post("/build-task")
+async def build_task(body: "BuildTaskIn", bg: _BT, user: User = Depends(current_user)):
+    """Citizen submits civic task -> discovers sources -> builds map async."""
     if not body.task.strip():
         raise HTTPException(400, "task required")
-    return {"task": body.task,
-            "urls": discovermod.discover(body.task, min(body.max_results, 10))}
+    
+    # Generate slug from task + city
+    slug_base = re.sub(r'\W+', '-', body.task.lower().strip()).strip('-')
+    city_suffix = re.sub(r'\W+', '-', body.city.lower().strip()).strip('-') if body.city else ''
+    slug = f"{slug_base}{'-' + city_suffix if city_suffix else ''}"
+    
+    # Ensure unique slug
+    with Session(engine) as s:
+        existing = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
+        if existing:
+            slug = f"{slug}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    
+    # Discover government sources
+    discovered = discovermod.discover(body.task, max_results=5)
+    urls = [r['url'] for r in discovered[:3] if r.get('url')]
+    
+    if not urls:
+        raise HTTPException(400, "No government sources found for this task")
+    
+    # Validate URLs
+    valid_urls = []
+    for url in urls:
+        try:
+            validated = _validate_fetch_url(url)
+            valid_urls.append(validated)
+        except ValueError:
+            continue
+    
+    if not valid_urls:
+        raise HTTPException(400, "No valid government URLs found")
+    
+    # Create background job
+    job_payload = json.dumps({
+        "task": body.task,
+        "slug": slug,
+        "urls": valid_urls,
+        "city": body.city,
+        "state": body.state,
+        "user_id": user.id
+    })
+    
+    with Session(engine) as s:
+        j = Job(kind="build", created_by=user.id, payload=job_payload)
+        s.add(j)
+        s.commit()
+        s.refresh(j)
+        jid = j.id
+    
+    bg.add_task(jobsmod.run_build, engine, jid)
+    return {
+        "job_id": jid,
+        "slug": slug,
+        "status": "queued",
+        "task": body.task,
+        "urls_found": len(valid_urls)
+    }
+
+
+@app.get("/jobs/{job_id}")
+def job_status_public(job_id: int, user: User = Depends(current_user)):
+    """Public job status endpoint (for polling build tasks)."""
+    from .models import Job as JobModel
+    with Session(engine) as s:
+        j = s.get(JobModel, job_id)
+        if not j:
+            raise HTTPException(404, "unknown job")
+        # Check ownership or admin
+        if j.created_by != user.id and not user.is_admin:
+            raise HTTPException(403, "not your job")
+        result = json.loads(j.result) if j.result else {}
+        return {
+            "job_id": j.id,
+            "kind": j.kind,
+            "status": j.status,
+            "result": result,
+            "finished": bool(j.finished_at)
+        }
+
+
+@app.get("/task/{slug}")
+def get_task_map(slug: str, user: User = Depends(current_user)):
+    """Get any task map by slug (public read after verification)."""
+    with Session(engine) as s:
+        m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
+        if not m:
+            raise HTTPException(404, "unknown map")
+        # Allow access to unverified maps during build, but note status
+        return {
+            "slug": m.slug,
+            "title": m.title,
+            "city": m.city,
+            "graph": json.loads(m.graph_json),
+            "sources": json.loads(m.source_urls),
+            "verified": bool(m.verified_at),
+            "verified_at": m.verified_at
+        }
+
+
 
 
 # ---------------- Mini-Hermes Agent -----------------------------------------
