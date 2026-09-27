@@ -23,7 +23,9 @@ npm run dev                                                         # in fronten
   fees, prerequisites; every step links its official `.gov` source. Edges are
   inferred **across sources**: duplicate-step merge, prerequisite token-matching,
   source-order bridging, LLM dependency refinement (validated: ids, dedupe,
-  acyclicity) — not just sequential chains.
+  acyclicity) — not just sequential chains. Steps carry a per-step application /
+  form deep link when one is found on the page (validated: source-host or
+  .gov.in/.nic.in only — LLM-hallucinated foreign links are dropped).
 - **Admin step editing** — per-step update/add/delete (title, detail, fee,
   official link, type) via `/admin/maps/{slug}/steps` with audit log.
 - **Personal twin** — JWT login → DigiLocker OAuth (consent-first) → per-user
@@ -57,7 +59,7 @@ npm run dev                                                         # in fronten
 ## Verify
 
 ```bash
-python -m pytest backend/tests/ -q        # 59 tests
+python -m pytest backend/tests/ -q        # 62 tests
 python backend/sim/run_sim.py             # 8-step life sim (mock world)
 python backend/sim/run_personas.py        # 20 personas, 20/20 sane
 ```

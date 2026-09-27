@@ -18,11 +18,12 @@ type AdminStep = {
   title: string;
   detail?: string;
   url?: string;
+  link?: string;
   fee?: string;
 };
 
 const STEP_TYPES = ['prereq', 'action', 'payment', 'visit', 'unlocked', 'document'];
-const EMPTY_STEP = { title: '', detail: '', fee: '', url: '', type: 'action' };
+const EMPTY_STEP = { title: '', detail: '', fee: '', url: '', link: '', type: 'action' };
 
 export default function Admin() {
   const t = STR[lang()];
@@ -241,6 +242,7 @@ export default function Admin() {
                     <label className="cv-admin-field">Fee<input value={draft.fee || ''} onChange={(event) => setDraft({ ...draft, fee: event.target.value })} placeholder="e.g. ₹500" /></label>
                   </div>
                   <label className="cv-admin-field">Official source URL<input value={draft.url || ''} onChange={(event) => setDraft({ ...draft, url: event.target.value })} placeholder="https://...gov.in/..." /></label>
+                  <label className="cv-admin-field">Application / form link<input value={draft.link || ''} onChange={(event) => setDraft({ ...draft, link: event.target.value })} placeholder="https://...gov.in/form (deep link, optional)" /></label>
                   <label className="cv-admin-field">Detail<textarea value={draft.detail || ''} rows={2} onChange={(event) => setDraft({ ...draft, detail: event.target.value })} /></label>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button type="button" onClick={() => void saveStep(map.slug)} disabled={stepBusy || !draft.title.trim()}>{stepBusy ? 'Saving…' : 'Save step'}</button>
@@ -259,6 +261,7 @@ export default function Admin() {
                 <label className="cv-admin-field">Type<select value={newStep.type} onChange={(event) => setNewStep({ ...newStep, type: event.target.value })}>{STEP_TYPES.map((kind) => <option key={kind} value={kind}>{kind}</option>)}</select></label>
               </div>
               <label className="cv-admin-field">Official source URL<input value={newStep.url} onChange={(event) => setNewStep({ ...newStep, url: event.target.value })} placeholder="https://...gov.in/... (optional)" /></label>
+              <label className="cv-admin-field">Application / form link<input value={newStep.link} onChange={(event) => setNewStep({ ...newStep, link: event.target.value })} placeholder="https://...gov.in/form (deep link, optional)" /></label>
               <div><button type="button" onClick={() => void addStep(map.slug)} disabled={stepBusy || !newStep.title.trim()}>{stepBusy ? 'Saving…' : 'Add step'}</button></div>
             </div>
           </div>}

@@ -731,7 +731,8 @@ class StepIn(BaseModel):
     title: str
     detail: str = ""
     fee: str = ""
-    url: str = ""
+    url: str = ""    # official source page (proof link)
+    link: str = ""   # per-step application/form deep link
     type: str = "action"
     depends_on: list[str] = []  # used when adding a step
 
@@ -766,6 +767,9 @@ def admin_update_step(slug: str, step_id: str, body: StepIn,
     url = body.url.strip()
     if url:
         url = _validate_fetch_url(url)  # SSRF + .gov/.nic policy applies to edits too
+    link = body.link.strip()
+    if link:
+        link = _validate_fetch_url(link)
     node_type = body.type if body.type in STEP_TYPES else "action"
     with Session(engine) as s:
         m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
@@ -777,7 +781,8 @@ def admin_update_step(slug: str, step_id: str, body: StepIn,
             raise HTTPException(404, "unknown step")
         before = dict(node)
         node.update({"title": title, "detail": body.detail.strip(),
-                     "fee": body.fee.strip(), "url": url, "type": node_type})
+                     "fee": body.fee.strip(), "url": url, "link": link,
+                     "type": node_type})
         m.graph_json = json.dumps(g)
         s.add(m)
         s.commit()
@@ -797,6 +802,9 @@ def admin_add_step(slug: str, body: StepIn, admin: User = Depends(require_admin)
     url = body.url.strip()
     if url:
         url = _validate_fetch_url(url)
+    link = body.link.strip()
+    if link:
+        link = _validate_fetch_url(link)
     node_type = body.type if body.type in STEP_TYPES else "action"
     with Session(engine) as s:
         m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
@@ -810,7 +818,7 @@ def admin_add_step(slug: str, body: StepIn, admin: User = Depends(require_admin)
             raise HTTPException(400, f"unknown depends_on: {', '.join(missing)}")
         new_id = _slug_step(title, existing)
         nodes.append({"id": new_id, "type": node_type, "title": title,
-                      "detail": body.detail.strip(), "url": url,
+                      "detail": body.detail.strip(), "url": url, "link": link,
                       "fee": body.fee.strip()})
         # new node has no outgoing edges yet -> dep->new can never close a cycle
         for dep in body.depends_on:

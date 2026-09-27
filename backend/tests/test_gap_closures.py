@@ -132,6 +132,57 @@ def test_build_map_echoes_service_type(monkeypatch):
     assert result["service_type"] == "Business & Trade"
 
 
+# ---------------- Per-step application links (deep links) ----------------
+
+def test_heuristic_extracts_deep_links():
+    from app import worker as W
+
+    text = ("Udyam registration for MSME. Fee: Rs. 0. Required documents: PAN, "
+            "Aadhaar, photograph. Apply online at "
+            "https://udyam.gov.in/registration/apply-form. Download the form "
+            "from https://udyam.gov.in/forms/template.pdf")
+    steps = W.heuristic_extract(text, "https://udyam.gov.in/page")
+    apply_step = next(s for s in steps if s["id"] == "apply")
+    assert apply_step["link"] == "https://udyam.gov.in/registration/apply-form"
+    # every step still carries the source page as proof link
+    assert all(s["url"] == "https://udyam.gov.in/page" for s in steps)
+
+
+def test_llm_links_are_hallucination_proof(monkeypatch):
+    """Foreign-host LLM links are dropped; same-host / gov links kept."""
+    from app import worker as W
+    from app import llm as llmmod
+
+    raw = json.dumps([
+        {"id": "a", "type": "action", "title": "Apply", "detail": "x",
+         "fee": "", "link": "https://evil.example/phish"},
+        {"id": "b", "type": "payment", "title": "Pay fee", "detail": "x",
+         "fee": "100", "link": "https://dept.gov.in/pay"},
+        {"id": "c", "type": "prereq", "title": "Get form", "detail": "x",
+         "fee": "", "link": "not-a-url"},
+    ])
+    monkeypatch.setattr(llmmod, "_chat_raw", lambda prompt: (raw, "model"))
+    steps = W.llm_extract("page text " * 20, "https://dept.gov.in/page", "task")
+    links = {s["id"]: s["link"] for s in steps}
+    assert links["a"] == ""            # phishing host dropped
+    assert links["b"] == "https://dept.gov.in/pay"
+    assert links["c"] == ""            # malformed dropped
+    # source proof link never overwritten
+    assert all(s["url"] == "https://dept.gov.in/page" for s in steps)
+
+
+def test_build_map_nodes_carry_link(monkeypatch):
+    _mock_pipeline(monkeypatch)
+    from app import worker as W
+
+    monkeypatch.setattr(W, "llm_extract", lambda text, url, task: [
+        {"id": "apply", "type": "action", "title": "Apply online", "detail": "",
+         "fee": "", "url": url, "link": "https://dept.gov.in/forms/apply-1"},
+    ])
+    result = W.build_map("task", ["https://dept.gov.in/page"])
+    assert result["nodes"][0]["link"] == "https://dept.gov.in/forms/apply-1"
+
+
 # ---------------- Gap 3: per-step admin editing ----------------
 
 def _seed_edit_map(slug="edit-map", edge_sources=None):
@@ -172,12 +223,14 @@ def test_admin_step_edit_update(client, admin, monkeypatch):
     r = client.put("/admin/maps/edit-map/steps/a", headers=admin["headers"],
                    json={"title": "Updated title", "detail": "new detail",
                          "fee": "₹100", "url": "https://updated.gov.in/page",
+                         "link": "https://updated.gov.in/forms/form-9.pdf",
                          "type": "payment"})
     assert r.status_code == 200, r.text
     node = r.json()["node"]
     assert node["title"] == "Updated title"
     assert node["type"] == "payment"
     assert node["fee"] == "₹100"
+    assert node["link"] == "https://updated.gov.in/forms/form-9.pdf"
 
     # persisted
     r = client.get("/admin/maps/edit-map/steps", headers=admin["headers"])

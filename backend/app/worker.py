@@ -9,6 +9,7 @@ Every field keeps source_url + fetched_at. No proof link = dropped.
 import re
 import subprocess
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import trafilatura
 
@@ -71,21 +72,72 @@ def cascade_fetch(url: str) -> tuple[str, str]:
 
 FEE_RE = re.compile(r"(?:fee|fees|charge|cost|Rs\.?|₹)\s*[:\-]?\s*([₹Rs\.\s]*\d[\d,]*)", re.I)
 DOC_RE = re.compile(r"\b(Aadhaar|PAN|passport|ration card|birth certificate|address proof|bank (?:statement|passbook)|photograph|Form\s*\d*[A-Z]*)\b", re.I)
+URL_RE = re.compile(r"https?://[^\s\]\)\"'<>]+", re.I)
+LINK_HINTS = ("form", "apply", "register", "pay", "payment", "download",
+              "renew", "certif", "licen", "application", "applyfor")
+DOC_LINK_HINTS = ("form", "doc", "download", "certificate", "checklist", "template")
+
+
+def _url_host(u: str) -> str:
+    try:
+        return (urlparse(u or "").hostname or "").lower().rstrip(".")
+    except Exception:
+        return ""
+
+
+def _govish(host: str) -> bool:
+    return bool(host) and (host.endswith(".gov.in") or host.endswith(".nic.in")
+                           or host in {"gov.in", "nic.in"})
+
+
+def clean_link(link: str, source_url: str) -> str:
+    """Accept a per-step deep link only if it is http(s) AND on the source's
+    own host or an official .gov.in/.nic.in host. Blocks LLM-hallucinated
+    foreign URLs (phishing risk for citizens)."""
+    link = (link or "").strip().rstrip(".,;:'\")")
+    if not link.lower().startswith(("http://", "https://")):
+        return ""
+    host = _url_host(link)
+    if not host:
+        return ""
+    if host == _url_host(source_url) or _govish(host):
+        return link
+    return ""
+
+
+def pick_link(text: str, source_url: str, hints=LINK_HINTS) -> str:
+    """Best official deep link mentioned in fetched page text (same-host or
+    gov domain), preferring URLs whose path matches the given hints."""
+    src_host = _url_host(source_url)
+    best, best_score = "", -1
+    for raw in URL_RE.findall(text or ""):
+        cand = raw.rstrip(".,;:'\")")
+        host = _url_host(cand)
+        if not host or (host != src_host and not _govish(host)):
+            continue
+        score = sum(2 for hint in hints if hint in cand.lower())
+        if host == src_host:
+            score += 1
+        if score > best_score:
+            best, best_score = cand, score
+    return best
 
 
 def heuristic_extract(text: str, url: str) -> list[dict]:
-    """Zero-LLM fallback: fees + document mentions -> candidate steps."""
+    """Zero-LLM fallback: fees + document mentions + official links -> steps."""
     fees = sorted(set(FEE_RE.findall(text)))[:5]
     docs = sorted(set(m.group(1) for m in DOC_RE.finditer(text)))[:10]
+    doc_link = pick_link(text, url, DOC_LINK_HINTS)
+    app_link = pick_link(text, url, LINK_HINTS)
     steps = []
     if docs:
         steps.append({"id": "docs", "type": "prereq", "title": "Gather documents",
                       "detail": "Mentioned on source: " + ", ".join(docs),
-                      "url": url, "fee": ""})
+                      "url": url, "link": doc_link, "fee": ""})
     steps.append({"id": "apply", "type": "action", "title": "Apply on official portal",
                   "detail": ("Fees seen: " + ", ".join(fees) if fees else
                              "See official page for current fee schedule."),
-                  "url": url, "fee": fees[0] if fees else ""})
+                  "url": url, "link": app_link, "fee": fees[0] if fees else ""})
     return steps
 
 
@@ -93,7 +145,9 @@ def llm_extract(text: str, url: str, task: str) -> list[dict]:
     prompt = (f"Task: {task}\nSource: {url}\nPage text (truncated):\n{text[:6000]}\n\n"
               "Return JSON list of steps: "
               '[{"id":str,"type":"prereq|action|payment|visit","title":str,'
-              '"detail":str,"fee":str}]. Max 8 steps, ordered. No prose.')
+              '"detail":str,"fee":str,"link":str}]. "link" is the exact application/'
+              'form URL from the page text for this step ("" if none). Max 8 steps, '
+              'ordered. No prose.')
     try:
         raw, _ = llmmod._chat_raw(prompt)
     except Exception:
@@ -104,6 +158,7 @@ def llm_extract(text: str, url: str, task: str) -> list[dict]:
         steps = json.loads(m.group(0)) if m else []
         for s in steps:
             s["url"] = url
+            s["link"] = clean_link(s.get("link", ""), url)
         return steps[:8] if steps else heuristic_extract(text, url)
     except Exception:
         return heuristic_extract(text, url)
@@ -207,13 +262,16 @@ def merge_sources(per_source: list[tuple[str, list[dict]]]) -> tuple[list[dict],
                 match_id = base
                 nodes.append({"id": match_id, "type": s.get("type", "action"),
                               "title": title, "detail": s.get("detail", ""),
-                              "url": url, "fee": s.get("fee", "")})
+                              "url": url, "link": s.get("link", ""),
+                              "fee": s.get("fee", "")})
             else:
                 node = next(nd for nd in nodes if nd["id"] == match_id)
                 if not node.get("detail") and s.get("detail"):
                     node["detail"] = s["detail"]
                 if not node.get("fee") and s.get("fee"):
                     node["fee"] = s["fee"]
+                if not node.get("link") and s.get("link"):
+                    node["link"] = s["link"]
             resolved.append(match_id)
         resolved_all.append((url, resolved))
     edges: list = []

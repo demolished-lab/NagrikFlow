@@ -50,8 +50,9 @@ Ordered by unblock-value. Checked items are done; unchecked need you or a key.
   JSON-safe `edge_sources` keys — fixed latent tuple-key crash), real dagre
   layered layout in Roadmap, per-step admin editing (GET/PUT/POST/DELETE
   `/admin/maps/{slug}/steps` + editor UI + audit log), explicit type-of-service
-  input (form → `/build-task` → job → `TaskMap.service_type` → API → UI).
-  59 pytest tests green.
+  input (form → `/build-task` → job → `TaskMap.service_type` → API → UI),
+  per-step application/form deep links (`link` field: heuristic URL extraction
+  + LLM, hallucination-proof validation). 62 pytest tests green.
 - [x] **Secrets** — rotation, 2h TTL, boot refusal without APP_SECRET.
 - [x] **Observability** — JSON logs + `/admin/metrics`.
 - [x] **Backups** — online snapshots to E: + retention + endpoints.
