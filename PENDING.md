@@ -41,7 +41,7 @@ Ordered by unblock-value. Checked items are done; unchecked need you or a key.
 - [x] Added Redis rate limiter backend option (`security_redis.py`)
 - [x] Added obscura install script (`install-obscura.bat`)
 - [x] Updated CI workflow with complete test pipeline
-- [x] Added 49 passing tests including new security tests
+- [x] Added 67 passing tests including new security tests
 - [x] Documented troubleshooting in README.md
 
 ## Done (do not regress)
