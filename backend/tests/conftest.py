@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
-os.environ["DATABASE_URL"] = f"sqlite:///{_tmp.name}"
+os.environ.setdefault("DATABASE_URL", f"sqlite:///{_tmp.name}")  # CI may preset Postgres
 os.environ["ALLOW_DEV_SECRET"] = "1"
 os.environ["LINK_PROBE"] = "0"  # tests must never hit the network
 
@@ -27,7 +27,8 @@ def _unique(prefix: str) -> str:
 
 @pytest.fixture()
 def client():
-    S._hits.clear()
+    from app import security as S
+    S.reset_store()
     with TestClient(M.app, raise_server_exceptions=False) as c:
         yield c
 

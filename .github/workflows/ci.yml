@@ -7,9 +7,35 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
-      - run: pip install -r backend/requirements.txt pytest httpx
+      - run: pip install -r backend/requirements.txt pytest httpx fakeredis
       - run: python -m pytest backend/tests/ -q
         env: { ALLOW_DEV_SECRET: "1" }
+  backend-pg:
+    # Full suite against real PostgreSQL (migrations, pg_trgm indexes, pg_dump backups)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: civic_test
+          POSTGRES_USER: civic
+          POSTGRES_PASSWORD: civic
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      ALLOW_DEV_SECRET: "1"
+      DATABASE_URL: postgresql+psycopg://civic:civic@localhost:5432/civic_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - run: pip install -r backend/requirements.txt pytest httpx fakeredis
+      - run: python -m pytest backend/tests/ -q
   frontend:
     runs-on: ubuntu-latest
     steps:

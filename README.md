@@ -60,7 +60,7 @@ npm run dev                                                         # in fronten
 ## Verify
 
 ```bash
-python -m pytest backend/tests/ -q        # 67 tests
+python -m pytest backend/tests/ -q        # 81 tests
 python backend/sim/run_sim.py             # 8-step life sim (mock world)
 python backend/sim/run_personas.py        # 20 personas, 20/20 sane
 ```
@@ -96,5 +96,6 @@ curl http://127.0.0.1:8000/hermes/tools -H "Authorization: Bearer <token>"
 - `PENDING.md` — what's left (credentials + institutional track)
 - `GOVERNMENT_READINESS_AUDIT.md` — DPDP compliance checklist mapped to code
 - `PRODUCTION_DEPLOYMENT.md` — deployment runbook with troubleshooting
+- `compliance/` — DPO letter, breach response, DPDP map, pen-test scope, usability protocol
 - `.env.example` — all required environment variables documented
 - `/docs` — Swagger UI at http://localhost:8000/docs

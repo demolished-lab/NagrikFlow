@@ -22,6 +22,15 @@ APP_SECRET_PREV=          # Only during rotation
 SESSION_TTL_SECONDS=7200  # 2 hours
 ALLOW_DEV_SECRET=         # Empty in production
 DATABASE_URL=postgresql://user:pass@host:5432/dbname
+REDIS_URL=                # redis://host:6379/0 — enables shared rate limits + multi-worker
+TELEGRAM_WEBHOOK_SECRET=  # webhook header validation (set + send as X-Telegram-Bot-Api-Secret-Token)
+METRICS_TOKEN=            # if set, /metrics requires Bearer/X-Metrics-Token
+BACKUP_S3_ENDPOINT=       # S3-compatible endpoint (empty = local files only)
+BACKUP_S3_BUCKET=
+BACKUP_S3_KEY_ID=
+BACKUP_S3_SECRET=
+BACKUP_S3_REGION=
+BACKUP_S3_PREFIX=civic-pathfinder/
 DIGILOCKER_CLIENT_ID=<from-api-setu>
 DIGILOCKER_CLIENT_SECRET=<from-api-setu>
 DIGILOCKER_REDIRECT_URI=https://your-domain.com/auth/digilocker/callback
@@ -73,10 +82,14 @@ sudo certbot --nginx -d your-domain.com
 pip install -r backend/requirements.txt
 
 # Run with gunicorn.
-# SINGLE WORKER by design: the rate limiter (in-memory) and the build-job
-# queue are process-local, and SQLite is single-writer. Scaling to
-# --workers 4 first requires (1) shared rate-limit state (Redis/Postgres),
-# (2) an external job queue, (3) DATABASE_URL -> PostgreSQL.
+# WORKERS: single worker with SQLite (single-writer + process-local limits).
+# With DATABASE_URL=Postgres AND REDIS_URL set, rate-limit state is shared via
+# Redis and the DB handles concurrency → --workers 4 is allowed (jobs run
+# per-request in-process; no external queue needed).
+# Scaling rules:
+#   SQLite  → always --workers 1
+#   Postgres only → --workers 1 (rate limit still per-process)
+#   Postgres + REDIS_URL → --workers 4 (recommended)
 gunicorn app.main:app \
   --workers 1 \
   --worker-class uvicorn.workers.UvicornWorker \
@@ -155,73 +168,72 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 
 ### 8. Monitoring & Alerting
 
+Endpoints (all implemented):
+
+```bash
+GET /healthz          # liveness — 200 {"ok":true}
+GET /readyz           # readiness: DB connect + schema_version + Redis (if configured)
+                      # → 503 on failure; point k8s/compose healthchecks here
+GET /metrics          # Prometheus text: civic_http_requests_total,
+                      # civic_http_errors_total, civic_http_request_duration_ms_total
+                      # (paths normalized to 2 segments → bounded cardinality)
+                      # If METRICS_TOKEN set: Authorization: Bearer <token> or X-Metrics-Token
+GET /admin/integrations?probe=1   # admin-only doctor: database, rate_limiter, redis,
+                      # telegram, digilocker, llm, backup, email, nltk_guard (booleans only)
+```
+
+```yaml
+# prometheus.yml scrape example
+- job_name: civic-api
+  metrics_path: /metrics
+  # authorization: { credentials: <METRICS_TOKEN> }   # if set
+  static_configs: [{ targets: ["127.0.0.1:8000"] }]
+```
+
 ```bash
 # UptimeRobot (free tier)
-# Monitor: https://your-domain.com/health
+# Monitor: https://your-domain.com/readyz   # fails when DB/Redis down
 # Check every 5 minutes
 # Alert on: HTTP 5xx, timeout > 30s
-
-# Optional: Self-hosted metrics
-# Install Prometheus + Grafana for:
-# - Request rates
-# - Error rates
-# - Latency percentiles
-# - Database connections
 ```
+
+Structured request logs (`{"m","p","s","ms"}`) go to stderr — ship them
+wherever you keep logs; `/readyz` is the alerting signal, `/healthz` the
+restart signal.
 
 ### 9. Backup Strategy
 
 ```bash
-# Daily automated backups to E: drive
-# Retention: 7 days
-# Test restore monthly
-
-# Manual backup command
+# Manual backup (works on SQLite + Postgres)
 cd backend
 python -m app.backup run
+#  sqlite → file copy (online, consistent)
+#  Postgres → pg_dump (password passed via PGPASSWORD, never argv)
+#  When BACKUP_S3_* configured → uploads to S3-compatible storage
+#    BACKUP_S3_ENDPOINT / BACKUP_S3_BUCKET / BACKUP_S3_KEY_ID /
+#    BACKUP_S3_SECRET / BACKUP_S3_REGION / BACKUP_S3_PREFIX
+#  Retention: keeps 7 newest snapshots; upload failures are logged, never fatal
 
 # Verify backup
-ls -la data/backups/
+ls -la backups/
+python -m app.backup list
+
+# Restore drill (document it):
+#   sqlite: stop app, replace civic.db, start
+#   postgres: createdb civic_new && pg_restore ... && swap DATABASE_URL
+# Schedule: daily (cron/systemd timer), test restore quarterly
 ```
 
-### 10. CI/CD Pipeline Enhancement
+### 10. CI/CD Pipeline
 
-Update `.github/workflows/ci.yml`:
+`.github/workflows/ci.yml` runs on every push/PR:
 
-```yaml
-name: civic-ci
-
-on: [push, pull_request]
-
-jobs:
-  backend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - run: pip install -r backend/requirements.txt pytest
-      - run: python -m pytest backend/tests/ -q
-        env: { ALLOW_DEV_SECRET: "1" }
-      - run: cd backend && python -m py_compile app/*.py
-      
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 24, cache: npm }
-      - run: npm ci --prefix frontend
-      - run: npm run build --prefix frontend
-      - run: npx tsc --noEmit --project frontend/tsconfig.json
-
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: pip install safety
-      - run: safety check -r backend/requirements.txt
-```
+| Job | What it proves |
+|---|---|
+| `backend` | Full pytest suite (81 tests) on SQLite |
+| `backend-pg` | **Full suite on real PostgreSQL 16** (migrations, pg_trgm, pg_dump backup path) |
+| `frontend` | `vite build` + `tsc --noEmit` |
+| `deps` | `pip-audit` (nltk PYSEC-2026-3740 tracked as explicit exception — crawl4ai transitive, no fix yet) |
 
 ---
 
@@ -302,24 +314,30 @@ WantedBy=multi-user.target
 - [x] Grievance mechanism
 
 ### Legal/Organizational ❌ (Requires Action)
-- [ ] Appoint Data Protection Officer
-- [ ] Draft breach notification procedure
-- [ ] Create incident response plan
-- [ ] Obtain penetration test report
+- [x] Draft breach notification procedure → `compliance/BREACH_RESPONSE.md`
+- [x] DPO appointment letter template → `compliance/DPO_APPOINTMENT.md`
+- [x] DPDP clause → control map → `compliance/DPDP_COMPLIANCE_MAP.md`
+- [x] Pen-test scope & rules of engagement → `compliance/PEN_TEST_SCOPE.md`
+- [x] Usability testing protocol → `compliance/USABILITY_TESTING_PROTOCOL.md`
+- [ ] **Sign/issue** the DPO letter (needs real signatory)
+- [ ] Conduct pen test (issue `PEN_TEST_SCOPE.md` to vendor)
 - [ ] Register with MeitY/Digital India Corp
 - [ ] Get ISO 27001 certification (recommended)
 - [ ] Sign Data Processing Agreements with vendors
 - [ ] Publish accessibility statement
-- [ ] Conduct usability testing with real citizens
+- [ ] Conduct usability testing with real citizens (run protocol, N=8)
+- [ ] Parental-consent flow + nomination feature (DPDP s.11/s.12 gaps)
 
 ### Infrastructure ❌ (Requires Investment)
-- [ ] PostgreSQL database (Neon/Supabase free tier or paid)
+- [x] CI/CD: SQLite suite + **Postgres suite** + frontend + pip-audit
+- [x] Backup automation (local dumps + optional S3, retention 7)
+- [x] Monitoring endpoints (healthz/readyz/metrics + integrations doctor)
+- [ ] PostgreSQL database (Neon/Supabase free tier or paid) — CI-proven; wire at deploy
+- [ ] Redis (for multi-worker rate limits; in-process fallback exists)
 - [ ] SSL certificate (Let's Encrypt free)
 - [ ] Domain name registration
-- [ ] Uptime monitoring setup
-- [ ] CI/CD pipeline enhancement
+- [ ] External uptime monitor (UptimeRobot) pointed at /readyz
 - [ ] Staging environment
-- [ ] Backup automation
 
 ---
 
@@ -359,14 +377,14 @@ WantedBy=multi-user.target
 - [ ] Generate APP_SECRET
 - [ ] Deploy to staging
 - [ ] Configure DNS and SSL
-- [ ] Set up monitoring
-- [ ] Create DPO appointment letter
+- [x] Monitoring endpoints (healthz/readyz/metrics)
+- [x] Create DPO appointment letter (template ready in `compliance/`)
 
 ### Week 2: Compliance
 - [ ] Submit to MeitY startup recognition
-- [ ] Draft breach notification procedure
-- [ ] Create incident response plan
-- [ ] Publish privacy policy and TOS
+- [x] Draft breach notification procedure (`compliance/BREACH_RESPONSE.md`)
+- [x] Create incident response plan (same + `PEN_TEST_SCOPE.md`)
+- [ ] Sign & publish DPO letter; publish privacy policy and TOS
 - [ ] Set up grievance email
 
 ### Month 2: Security

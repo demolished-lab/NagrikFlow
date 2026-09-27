@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Header
+from fastapi import Depends, FastAPI, HTTPException, Query, Header, Request
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -17,7 +17,7 @@ from .https_middleware import HTTPSRedirectMiddleware
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 from sqlmodel import Session, SQLModel, create_engine, select
-from sqlalchemy import delete as _sa_delete
+from sqlalchemy import delete as _sa_delete, text as _sa_text
 
 
 def _load_env():
@@ -138,6 +138,8 @@ def _validate_fetch_url(url: str) -> str:
 def _init_db():
     from . import migrate as migratemod
     migratemod.migrate(engine)
+    from . import nltk_guard as nltkguard
+    nltkguard.install()  # pathsec guard for nltk model-artifact APIs (PYSEC-2026-3740)
 
 
 _init_db()
@@ -146,6 +148,52 @@ _init_db()
 @app.get("/health")
 def health():
     return {"ok": True, "digilocker_env": dg.ENV}
+
+
+@app.get("/healthz")
+def healthz():
+    """Liveness probe: process is up and serving (never rate limited)."""
+    return {"ok": True, "status": "live"}
+
+
+@app.get("/readyz")
+def readyz():
+    """Readiness probe: database reachable + schema present + Redis (if
+    configured) answering. 503 when any required component fails."""
+    checks: dict[str, str] = {}
+    ok = True
+    try:
+        with engine.connect() as conn:
+            conn.execute(_sa_text("SELECT 1"))
+            conn.execute(_sa_text("SELECT count(*) FROM schemaversion"))
+        checks["database"] = "ok"
+        checks["migrations"] = "ok"
+    except Exception as e:
+        checks["database"] = f"fail: {type(e).__name__}"
+        ok = False
+    if os.environ.get("REDIS_URL", "").strip():
+        from . import security_redis as srmod
+        client = srmod.get_client()
+        if client is None:
+            srmod.reset()  # give Redis a reconnect chance on each probe
+            client = srmod.get_client()
+        checks["redis"] = "ok" if client is not None else "fail"
+        ok = ok and client is not None
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"ok": ok, "checks": checks}, 200 if ok else 503)
+
+
+@app.get("/metrics")
+def metrics(request: Request):
+    """Prometheus text format. Optional METRICS_TOKEN guards scraping
+    (Authorization: Bearer <token> or X-Metrics-Token)."""
+    token = os.environ.get("METRICS_TOKEN", "").strip()
+    if token:
+        got = request.headers.get("x-metrics-token", "")
+        auth = request.headers.get("authorization", "")
+        if got != token and auth != f"Bearer {token}":
+            raise HTTPException(401, "metrics token required")
+    return Response(obsmod.prometheus(), media_type="text/plain; version=0.0.4")
 
 
 @app.get("/health/llm")
@@ -967,6 +1015,52 @@ def job_status(job_id: int, admin: User = Depends(require_admin)):
 def admin_metrics(admin: User = Depends(require_admin)):
     """Request counts, error counts, avg latency per route (in-memory)."""
     return obsmod.snapshot()
+
+
+@app.get("/admin/integrations")
+async def admin_integrations(probe: bool = False,
+                             admin: User = Depends(require_admin)):
+    """Config status of every external integration; secrets are never echoed.
+    probe=true adds live pings (Telegram getMe, Redis ping)."""
+    from . import security_redis as srmod
+    from . import nltk_guard as ngmod
+    redis_url = os.environ.get("REDIS_URL", "").strip()
+    redis_ok = None
+    if redis_url:
+        client = srmod.get_client()
+        if client is None:
+            srmod.reset()
+            client = srmod.get_client()
+        redis_ok = client is not None
+    tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    telegram = {"bot_token": bool(tg_token),
+                "webhook_secret": bool(os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()),
+                "live": None}
+    if probe and tg_token:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as hc:
+                r = await hc.get(f"https://api.telegram.org/bot{tg_token}/getMe")
+                telegram["live"] = bool(r.json().get("ok"))
+        except Exception:
+            telegram["live"] = False
+    dl_id = os.environ.get("DIGILOCKER_CLIENT_ID", "").strip()
+    dl_secret = os.environ.get("DIGILOCKER_CLIENT_SECRET", "").strip()
+    return {
+        "database": {"engine": str(engine.url).split(":")[0]},
+        "rate_limiter": {"backend": "redis" if redis_url else "memory"},
+        "redis": {"configured": bool(redis_url), "ok": redis_ok},
+        "telegram": telegram,
+        "digilocker": {"env": dg.ENV, "client_id": bool(dl_id),
+                       "client_secret": bool(dl_secret),
+                       "ready": bool(dl_id and dl_secret)},
+        "llm": await llmhealth.health_check(),
+        "backup": {"dir": str(backupmod.BACKUP_DIR),
+                   "s3": backupmod.s3_configured()},
+        "email": {"provider": os.environ.get("NOTIFY_PROVIDER", ""),
+                  "smtp": bool(os.environ.get("SMTP_HOST", "").strip())},
+        "nltk_guard": {"installed": ngmod.is_installed()},
+    }
 
 
 @app.post("/admin/backup")

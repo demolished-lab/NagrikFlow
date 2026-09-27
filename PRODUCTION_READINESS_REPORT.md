@@ -6,7 +6,7 @@
 **Status:** Technical foundation complete, legal/organizational steps pending approval.
 
 The Civic Path Navigator application has a solid technical base with:
-- 67 passing tests
+- 81 passing tests
 - Clean frontend build
 - DPDP Act compliance features implemented
 - Security hardening in place
@@ -19,7 +19,7 @@ However, **government approval requires additional organizational and legal step
 ## Technical Status ✅
 
 ### Code Quality
-- [x] Backend: 67 pytest tests passing
+- [x] Backend: 81 pytest tests passing (plus a second full run on Postgres 16 in CI)
 - [x] Frontend: TypeScript, builds clean
 - [x] CI/CD: GitHub Actions configured (backend + frontend jobs)
 - [x] No TODO/FIXME/HACK markers in codebase

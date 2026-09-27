@@ -1,6 +1,7 @@
-# Production compose: Postgres + API. Frontend ships separately to Cloudflare Pages.
-# First boot: docker compose up -d db && docker compose run --rm api python -c "import app" (migrations run at startup).
-# NOTE: compose is config-complete but NOT live-tested here (no docker daemon on dev box).
+# Production compose: Postgres + Redis + API. Frontend ships separately to Cloudflare Pages.
+# First boot: docker compose up -d db redis && docker compose run --rm api python -c "import app" (migrations run at startup).
+# NOTE: config is exercised in CI (backend-pg job runs the full suite on postgres:16);
+# the local dev box's Docker/WSL engine is broken, so local runs used sqlite until repaired.
 services:
   db:
     image: postgres:16-alpine
@@ -16,14 +17,26 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
   api:
     build: ./backend
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://civic:${POSTGRES_PASSWORD}@db:5432/civic
+      REDIS_URL: redis://redis:6379/0
       APP_SECRET: ${APP_SECRET:?set it}
       APP_SECRET_PREV: ${APP_SECRET_PREV:-}
       FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:5173}
@@ -34,9 +47,22 @@ services:
       DIGILOCKER_CLIENT_SECRET: ${DIGILOCKER_CLIENT_SECRET:-}
       BYNARA_API_KEY: ${BYNARA_API_KEY:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_S3_KEY_ID: ${BACKUP_S3_KEY_ID:-}
+      BACKUP_S3_SECRET: ${BACKUP_S3_SECRET:-}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-}
+      BACKUP_S3_PREFIX: ${BACKUP_S3_PREFIX:-}
     ports:
       - "127.0.0.1:8000:8000"
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     volumes:
       - ./backups:/backups
 volumes:

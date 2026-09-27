@@ -17,13 +17,14 @@ class SchemaVersion(SQLModel, table=True):
 
 def _ensure_columns(engine):
     from sqlalchemy import inspect, text
+    dt = "TIMESTAMP" if engine.dialect.name == "postgresql" else "DATETIME"
     stmts = []
     try:
         have = {c["name"] for c in inspect(engine).get_columns("user")}
         if "failed_attempts" not in have:
             stmts.append("ALTER TABLE user ADD COLUMN failed_attempts INTEGER DEFAULT 0")
         if "locked_until" not in have:
-            stmts.append("ALTER TABLE user ADD COLUMN locked_until DATETIME")
+            stmts.append(f"ALTER TABLE user ADD COLUMN locked_until {dt}")
     except Exception:
         pass
     try:
@@ -31,7 +32,7 @@ def _ensure_columns(engine):
         if "content_hash" not in thave:
             stmts.append("ALTER TABLE taskmap ADD COLUMN content_hash VARCHAR DEFAULT ''")
         if "checked_at" not in thave:
-            stmts.append("ALTER TABLE taskmap ADD COLUMN checked_at DATETIME")
+            stmts.append(f"ALTER TABLE taskmap ADD COLUMN checked_at {dt}")
         if "state" not in thave:
             stmts.append("ALTER TABLE taskmap ADD COLUMN state VARCHAR DEFAULT ''")
         if "edge_sources" not in thave:
