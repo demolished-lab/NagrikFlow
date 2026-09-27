@@ -11,6 +11,7 @@ import { api } from './api';
 
 type Tab = 'home' | 'roadmap' | 'civic_twin' | 'agent' | 'admin';
 type AuthState = 'landing' | 'login' | 'app';
+type Route = { tab: Tab; slug?: string };
 
 const SIDEBAR_ITEMS: { id: Tab; icon: string; label: Record<Lang, string> }[] = [
   { id: 'home', icon: '⌂', label: { en: 'Home', hi: 'होम' } },
@@ -23,28 +24,143 @@ const SIDEBAR_ITEMS: { id: Tab; icon: string; label: Record<Lang, string> }[] = 
 export default function App() {
   const [token] = useState<string>(localStorage.getItem('civic_token') || '');
   const [authState, setAuthState] = useState<AuthState>(token ? 'app' : 'landing');
-  const [tab, setTab] = useState<Tab>('home');
+  const [route, setRoute] = useState<Route>({ tab: 'home' });
   const [lg, setLg] = useState<Lang>(lang());
   const [isAdmin, setIsAdmin] = useState(false);
   const t = STR[lg];
-  useEffect(() => { if (authState === 'app') api.profile().then((profile) => setIsAdmin(profile.role === 'admin')).catch(() => setIsAdmin(false)); }, [authState]);
+
+  useEffect(() => {
+    if (authState === 'app') {
+      api.profile().then((profile) => setIsAdmin(profile.role === 'admin')).catch(() => setIsAdmin(false));
+    }
+  }, [authState]);
+
+  // Handle hash-based routing
+  useEffect(() => {
+    const handleHash = () => {
+      const hash = window.location.hash.slice(1);
+      if (hash.startsWith('/roadmap/')) {
+        const slug = hash.replace('/roadmap/', '');
+        setRoute({ tab: 'roadmap', slug });
+      } else {
+        setRoute({ tab: 'home' });
+      }
+    };
+    handleHash();
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, []);
+
+  const navigateTo = (tab: Tab, slug?: string) => {
+    setRoute({ tab, slug });
+    if (tab === 'home' || !slug) {
+      window.location.hash = '';
+    } else {
+      window.location.hash = `/roadmap/${slug}`;
+    }
+  };
+
   if (authState === 'landing') return <LandingPage onLogin={() => setAuthState('login')} />;
   if (authState === 'login') return <LoginPanel onLogin={() => setAuthState('app')} />;
 
   return <div className="cv-app-layout">
     <aside className="cv-sidebar">
-      <div className="cv-brand"><div className="cv-brand-mark">⌁</div><div><div className="cv-brand-name">Civic Path Navigator</div><div className="cv-brand-sub">Municipal Bureaucracy Path Visualizer</div></div><span className="cv-pswb">PSWB 02</span></div>
-      <nav className="cv-nav" aria-label="Main navigation">{SIDEBAR_ITEMS.filter((item) => item.id !== 'admin' || isAdmin).map(item => <button key={item.id} onClick={() => setTab(item.id)} className={`cv-nav-item ${tab === item.id ? 'cv-nav-item-active' : ''}`} aria-current={tab === item.id ? 'page' : undefined}><span className="cv-nav-icon">{item.icon}</span><span>{item.label[lg]}</span></button>)}</nav>
-      <div className="cv-sidebar-footer"><div className="cv-sidebar-callout"><strong>Smarter. Simpler.<br />More Connected.</strong><p>One place for your civic needs — powered by verified government sources and your DigiLocker.</p></div><button className="cv-nav-item cv-logout" onClick={() => { localStorage.removeItem('civic_token'); setAuthState('landing'); }}>↪ {t.logout}</button></div>
+      <div className="cv-brand">
+        <div className="cv-brand-mark">⌁</div>
+        <div>
+          <div className="cv-brand-name">Civic Path Navigator</div>
+          <div className="cv-brand-sub">Municipal Bureaucracy Path Visualizer</div>
+        </div>
+        <span className="cv-pswb">PSWB 02</span>
+      </div>
+      <nav className="cv-nav" aria-label="Main navigation">
+        {SIDEBAR_ITEMS.filter((item) => item.id !== 'admin' || isAdmin).map(item => (
+          <button
+            key={item.id}
+            onClick={() => navigateTo(item.id)}
+            className={`cv-nav-item ${route.tab === item.id ? 'cv-nav-item-active' : ''}`}
+            aria-current={route.tab === item.id ? 'page' : undefined}
+          >
+            <span className="cv-nav-icon">{item.icon}</span>
+            <span>{item.label[lg]}</span>
+          </button>
+        ))}
+      </nav>
+      <div className="cv-sidebar-footer">
+        <div className="cv-sidebar-callout">
+          <strong>Smarter. Simpler.<br />More Connected.</strong>
+          <p>One place for your civic needs — powered by verified government sources and your DigiLocker.</p>
+        </div>
+        <button className="cv-nav-item cv-logout" onClick={() => { localStorage.removeItem('civic_token'); setAuthState('landing'); }}>
+          ↪ {t.logout}
+        </button>
+      </div>
     </aside>
     <main className="cv-main">
-      <header className="cv-header"><div className="cv-search-bar"><span className="cv-search-icon">⌕</span><input placeholder="Search for a civic task (e.g., water connection, birth certificate, property tax...)" aria-label="Search civic tasks" /></div><div className="cv-header-actions"><button className="cv-language" onClick={() => { const next = lg === 'en' ? 'hi' : 'en'; setLang(next); setLg(next); }}>{lg === 'en' ? 'English / मराठी' : 'हिन्दी / English'}</button><button className="cv-help">? &nbsp;Help</button><button className="cv-profile"><span>●</span> Civic Twin <b>⌄</b></button></div></header>
-      <div className="cv-content">{tab === 'home' && <HomeView />}{tab === 'roadmap' && <Roadmap slug="udyam-register" />}{tab === 'civic_twin' && <Dashboard />}{tab === 'agent' && <AgentPanel />}{tab === 'admin' && <Admin />}</div>
+      <header className="cv-header">
+        <div className="cv-search-bar">
+          <span className="cv-search-icon">⌕</span>
+          <input
+            placeholder="Search for a civic task..."
+            aria-label="Search civic tasks"
+            className="cv-search-input"
+          />
+        </div>
+        <div className="cv-header-actions">
+          <button className="cv-language" onClick={() => { const next = lg === 'en' ? 'hi' : 'en'; setLang(next); setLg(next); }}>
+            {lg === 'en' ? 'English / मरaठी' : 'हिन्दी / English'}
+          </button>
+          <button className="cv-help">? &nbsp;Help</button>
+          <button className="cv-profile"><span>●</span> Civic Twin <b>⌄</b></button>
+        </div>
+      </header>
+      <div className="cv-content">
+        {route.tab === 'home' && <HomeView />}
+        {route.tab === 'roadmap' && <Roadmap slug={route.slug || 'udyam-register'} />}
+        {route.tab === 'civic_twin' && <Dashboard />}
+        {route.tab === 'agent' && <AgentPanel />}
+        {route.tab === 'admin' && <Admin />}
+      </div>
     </main>
     <aside className="cv-context-panel"><CivicTwinPanel /></aside>
   </div>;
 }
 
 function CivicTwinPanel() {
-  return <div className="cv-twin-panel"><div className="cv-twin-heading"><span className="cv-twin-avatar">♙</span><div><h2>Your civic twin</h2><p>Your documents, connections and next best step.</p></div></div><div className="cv-twin-section"><h3>Your documents</h3>{[['♙','Identity','VERIFIED','verified'],['▤','Property tax receipt','VERIFIED','verified'],['◉','Address proof','AVAILABLE','available'],['▥','Water bill','MISSING','missing']].map(([icon, name, status, kind]) => <div className="cv-twin-doc" key={name}><span className={`cv-doc-round ${kind}`}>{icon}</span><strong>{name}</strong><span className={`cv-doc-badge ${kind}`}>{status}</span><b>›</b></div>)}</div><div className="cv-twin-section"><h3>⌕ &nbsp;What this unlocks</h3><div className="cv-unlock-card"><span>▤</span><strong>Property tax receipt&nbsp; →<br />water connection application</strong><b>›</b></div></div><div className="cv-twin-section"><div className="cv-next-win"><div className="cv-star">★</div><div><strong>Easiest next win</strong><p>Upload latest occupancy proof</p><small>This will unlock the application step<br />and save 2–3 days.</small></div><b>›</b></div></div><div className="cv-digilocker"><span>▣</span><div><strong>DigiLocker connected · consent active</strong><small>You control what gets shared.</small></div><a href="#manage">Manage access</a></div></div>;
+  return <div className="cv-twin-panel">
+    <div className="cv-twin-heading">
+      <span className="cv-twin-avatar">♙</span>
+      <div><h2>Your civic twin</h2><p>Your documents, connections and next best step.</p></div>
+    </div>
+    <div className="cv-twin-section">
+      <h3>Your documents</h3>
+      {[['♙','Identity','VERIFIED','verified'],['▤','Property tax receipt','VERIFIED','verified'],['◉','Address proof','AVAILABLE','available']].map(([icon, name, status, kind]) => (
+        <div key={name} className="cv-twin-doc">
+          <span className={`cv-doc-round ${kind}`}>{icon}</span>
+          <strong>{name}</strong>
+          <span className={`cv-doc-badge ${kind}`}>{status}</span>
+          <b>›</b>
+        </div>
+      ))}
+    </div>
+    <div className="cv-twin-section">
+      <h3>What this unlocks</h3>
+      <div className="cv-unlock-card">
+        <span>▤</span>
+        <strong>Property tax receipt<br/>→ water connection application</strong>
+        <b>›</b>
+      </div>
+    </div>
+    <div className="cv-twin-section">
+      <div className="cv-next-win">
+        <div className="cv-star">★</div>
+        <div>
+          <strong>Easiest next win</strong>
+          <p>Upload latest occupancy proof</p>
+          <small>This will unlock the application step<br/>and save 2–3 days.</small>
+        </div>
+        <b>›</b>
+      </div>
+    </div>
+  </div>;
 }

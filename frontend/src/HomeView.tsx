@@ -1,68 +1,177 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import { api } from './api';
+import { STR, lang } from './i18n';
 
-const steps = [
-  { title: 'New water\nconnection', label: 'Task', status: 'READY', tone: 'ready', icon: '◯', source: 'Municipal portal' },
-  { title: 'Property / occupancy\nproof', label: 'Proof', status: 'NEEDS ACTION', tone: 'action', icon: '⌂', source: 'Municipal portal' },
-  { title: 'Identity verification', label: 'Verification', status: 'UNLOCKED', tone: 'unlocked', icon: '▣', source: 'DigiLocker / API Setu' },
-  { title: 'No-dues / tax status', label: 'Clearance', status: 'READY', tone: 'ready', icon: '▤', source: 'Municipal portal' },
-  { title: 'Application', label: 'Form', status: 'NEEDS ACTION', tone: 'action', icon: '☷', source: 'Municipal portal' },
-  { title: 'Inspection', label: 'Review', status: 'UNLOCKED', tone: 'unlocked', icon: '⌕', source: 'Municipal portal' },
-  { title: 'Connection approval', label: 'Outcome', status: 'VERIFIED', tone: 'verified', icon: '♧', source: 'Municipal portal' },
-];
+interface BuildState {
+  status: 'idle' | 'discovering' | 'building' | 'done' | 'failed';
+  slug: string | null;
+  jobId: number | null;
+  task: string;
+  steps: any[];
+  sources: any[];
+  error: string;
+}
 
 export default function HomeView() {
-  const [task, setTask] = useState('I want to get a new water connection for my apartment');
-  const [built, setBuilt] = useState(false);
+  const t = STR[lang()];
+  const [task, setTask] = useState('');
+  const [city, setCity] = useState('');
+  const [state, setState] = useState('');
+  const [build, setBuild] = useState<BuildState>({
+    status: 'idle',
+    slug: null,
+    jobId: null,
+    task: '',
+    steps: [],
+    sources: [],
+    error: '',
+  });
+
+  const pollJob = useCallback(async (jobId: number, initialSlug: string) => {
+    const poll = setInterval(async () => {
+      try {
+        const status = await api.jobStatus(jobId);
+        if (status.status === 'done') {
+          clearInterval(poll);
+          const slug = status.result?.slug || initialSlug;
+          setBuild(prev => ({ ...prev, status: 'done', slug }));
+        } else if (status.status === 'failed') {
+          clearInterval(poll);
+          setBuild(prev => ({ 
+            ...prev, 
+            status: 'failed', 
+            error: status.result?.error || 'Build failed' 
+          }));
+        }
+      } catch {
+        clearInterval(poll);
+        setBuild(prev => ({ ...prev, status: 'failed', error: 'Polling error' }));
+      }
+    }, 2000);
+    
+    // Timeout after 3 minutes
+    setTimeout(() => clearInterval(poll), 180000);
+  }, []);
+
+  const handleBuild = async () => {
+    if (!task.trim()) return;
+    
+    setBuild({ status: 'discovering', slug: null, jobId: null, task, steps: [], sources: [], error: '' });
+    
+    try {
+      // Step 1: Submit build task to backend
+      const result = await api.buildTask(task, city, state);
+      
+      setBuild(prev => ({ 
+        ...prev, 
+        status: 'building', 
+        jobId: result.job_id,
+        slug: result.slug 
+      }));
+      
+      // Step 2: Start polling
+      pollJob(result.job_id, result.slug);
+      
+    } catch (e: any) {
+      setBuild({ status: 'failed', slug: null, jobId: null, task, steps: [], sources: [], error: String(e.message || e) });
+    }
+  };
+
+  const navigateToRoadmap = () => {
+    if (build.slug) {
+      window.location.href = `/roadmap/${build.slug}`;
+    }
+  };
+
+  const getStatusMessage = () => {
+    switch (build.status) {
+      case 'discovering': return 'Discovering government sources...';
+      case 'building': return 'Building your verified path...';
+      case 'done': return 'Path ready!';
+      case 'failed': return build.error;
+      default: return '';
+    }
+  };
 
   return (
     <div className="cv-home-view cv-anim-up">
+      {/* Task Input Section */}
       <section className="cv-task-composer">
-        <div className="cv-eyebrow">DESCRIBE YOUR CIVIC TASK</div>
+        <div className="cv-eyebrow">{t.buildPath || 'DESCRIBE YOUR CIVIC TASK'}</div>
         <div className="cv-task-row">
           <div className="cv-task-input-wrap">
             <span className="cv-inline-icon">⌕</span>
-            <input value={task} onChange={(e) => setTask(e.target.value)} aria-label="Civic task" />
+            <input
+              value={task}
+              onChange={(e) => setTask(e.target.value)}
+              placeholder={t.pathInputPlaceholder || "e.g., I want to get a new water connection..."}
+              aria-label="Civic task"
+              className="cv-task-input"
+              disabled={build.status === 'discovering' || build.status === 'building'}
+            />
           </div>
-          <button className="cv-build-btn" onClick={() => setBuilt(true)}>
-            {built ? 'Path verified' : 'Build verified path'} <span>→</span>
+          <button 
+            className="cv-build-btn" 
+            onClick={handleBuild}
+            disabled={build.status === 'discovering' || build.status === 'building' || !task.trim()}
+          >
+            {build.status === 'building' || build.status === 'discovering' ? 'Processing...' : `${t.buildPath || 'Build verified path'} →`}
           </button>
         </div>
-        <p className="cv-helper">Plain-language task <span>→</span> verified government workflow</p>
-      </section>
-
-      <section className="cv-path-card">
-        <div className="cv-path-heading">
-          <div>
-            <div className="cv-path-title"><span className="cv-check-circle">✓</span> Your Verified Path</div>
-            <div className="cv-path-meta">7 steps <span>•</span> 6 dependencies <span>•</span> 100% from verified sources</div>
+        <div className="cv-city-row">
+          <input
+            value={city}
+            onChange={(e) => setCity(e.target.value)}
+            placeholder="City (optional)"
+            className="cv-city-input"
+            disabled={build.status === 'discovering' || build.status === 'building'}
+          />
+          <input
+            value={state}
+            onChange={(e) => setState(e.target.value)}
+            placeholder="State (optional)"
+            className="cv-state-input"
+            disabled={build.status === 'discovering' || build.status === 'building'}
+          />
+        </div>
+        <p className="cv-helper">{t.rmDesc || 'Plain-language task → verified government workflow'}</p>
+        
+        {(build.status === 'discovering' || build.status === 'building') && (
+          <div className="cv-building-status">
+            <span className="cv-spinner"></span>
+            <span>{getStatusMessage()}</span>
           </div>
-          <span className="cv-verified-pill">✓ VERIFIED PATH</span>
-        </div>
-        <div className="cv-step-grid">
-          {steps.map((step, index) => (
-            <React.Fragment key={step.title}>
-              {index === 4 && <div className="cv-step-break" aria-hidden="true" />}
-              {index > 0 && index !== 4 && <div className="cv-step-arrow" aria-hidden="true">→</div>}
-              <article className={`cv-verified-step cv-step-${step.tone}`}>
-                <div className="cv-step-topline"><span className="cv-step-number">{index + 1}</span><span className="cv-step-label">{step.label}</span><span className="cv-step-icon">{step.icon}</span></div>
-                <h3>{step.title.split('\n').map((line) => <React.Fragment key={line}>{line}<br /></React.Fragment>)}</h3>
-                <span className={`cv-status cv-status-${step.tone}`}>{step.status}</span>
-                <p>{step.source} <span>•</span> verified</p>
-                <small>27 Sep 2026</small>
-                <details><summary>Why this step?</summary><div>Verified dependency in your civic workflow.</div></details>
-              </article>
-            </React.Fragment>
-          ))}
-        </div>
+        )}
+        
+        {build.status === 'failed' && (
+          <div className="cv-error-msg">{build.error}</div>
+        )}
       </section>
 
-      <section className="cv-sources-card">
-        <div className="cv-sources-heading"><div><div className="cv-sources-title"><span className="cv-check-circle small">✓</span> Sources checked</div><p>We’ve verified this path with trusted government sources.</p></div><span className="cv-last-checked">Last checked 27 Sep 2026&nbsp; ↻</span></div>
-        <div className="cv-source-grid">
-          {['National Government Services Portal', 'Municipal corporation portal', 'DigiLocker / API Setu'].map((source, index) => <div className="cv-source-card" key={source}><span className="cv-source-icon">{['◎', '⌂', '⌁'][index]}</span><div><strong>{source}</strong><p>{['Service information & eligibility', 'Local rules, fees & application process', 'Document verification & sharing'][index]}</p><small>Checked 27 Sep 2026</small><span className="cv-mini-verified">✓ VERIFIED</span></div><span className="cv-card-chevron">›</span></div>)}
-          <div className="cv-legend"><strong>Path legend</strong><span><i className="legend-solid" /> Verified dependency</span><span><i className="legend-dotted" /> Dependency inferred</span><span><i className="legend-person" /> User-provided document</span><span><i className="legend-dot" /> Needs confirmation</span></div>
-        </div>
-      </section>
+      {/* Success State - Navigate to Roadmap */}
+      {build.status === 'done' && build.slug && (
+        <section className="cv-path-card cv-animated-in">
+          <div className="cv-path-heading">
+            <div>
+              <div className="cv-path-title">
+                <span className="cv-check-circle">✓</span> Your Path is Ready
+              </div>
+              <div className="cv-path-meta">
+                {build.task} • Generated at {new Date().toLocaleString()}
+              </div>
+            </div>
+            <span className="cv-verified-pill">✓ BUILT</span>
+          </div>
+          
+          <div className="cv-action-row">
+            <button className="cv-btn cv-btn-primary cv-btn-lg" onClick={navigateToRoadmap}>
+              View Full Roadmap →
+            </button>
+          </div>
+          
+          <p className="cv-note">This will take you to the interactive roadmap where you can track progress.</p>
+        </section>
+      )}
     </div>
   );
 }
