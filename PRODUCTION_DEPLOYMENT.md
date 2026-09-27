@@ -72,9 +72,13 @@ sudo certbot --nginx -d your-domain.com
 # Install dependencies
 pip install -r backend/requirements.txt
 
-# Run with gunicorn (multi-worker)
+# Run with gunicorn.
+# SINGLE WORKER by design: the rate limiter (in-memory) and the build-job
+# queue are process-local, and SQLite is single-writer. Scaling to
+# --workers 4 first requires (1) shared rate-limit state (Redis/Postgres),
+# (2) an external job queue, (3) DATABASE_URL -> PostgreSQL.
 gunicorn app.main:app \
-  --workers 4 \
+  --workers 1 \
   --worker-class uvicorn.workers.UvicornWorker \
   --bind 127.0.0.1:8000 \
   --timeout 120 \
@@ -269,7 +273,7 @@ User=civic
 Group=civic
 WorkingDirectory=/opt/civic-pathfinder/backend
 ExecStart=/opt/civic-pathfinder/.venv/bin/gunicorn app.main:app \
-    --workers 4 \
+    --workers 1 \
     --worker-class uvicorn.workers.UvicornWorker \
     --bind 127.0.0.1:8000 \
     --timeout 120

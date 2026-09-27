@@ -17,6 +17,7 @@ from .https_middleware import HTTPSRedirectMiddleware
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 from sqlmodel import Session, SQLModel, create_engine, select
+from sqlalchemy import delete as _sa_delete
 
 
 def _load_env():
@@ -68,7 +69,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=FRONTEND_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 app.middleware("http")(secmod.rate_limit_middleware)
@@ -784,6 +785,7 @@ def admin_update_step(slug: str, step_id: str, body: StepIn,
                      "fee": body.fee.strip(), "url": url, "link": link,
                      "type": node_type})
         m.graph_json = json.dumps(g)
+        m.verified_at = None  # content changed -> approval must be re-stamped
         s.add(m)
         s.commit()
     from . import audit as auditmod
@@ -826,6 +828,7 @@ def admin_add_step(slug: str, body: StepIn, admin: User = Depends(require_admin)
                 edges.append([dep, new_id])
         g["nodes"], g["edges"] = nodes, edges
         m.graph_json = json.dumps(g)
+        m.verified_at = None  # content changed -> approval must be re-stamped
         s.add(m)
         s.commit()
     from . import audit as auditmod
@@ -862,6 +865,12 @@ def admin_delete_step(slug: str, step_id: str, admin: User = Depends(require_adm
         g["nodes"], g["edges"] = kept, edges
         m.graph_json = json.dumps(g)
         m.edge_sources = json.dumps(esrc)
+        m.verified_at = None  # content changed -> approval must be re-stamped
+        # a deleted step must not linger in user progress or milestone records
+        s.exec(_sa_delete(Progress).where(Progress.map_slug == slug,
+                                          Progress.step_id == step_id))
+        s.exec(_sa_delete(RoadmapMilestone).where(RoadmapMilestone.map_slug == slug,
+                                                  RoadmapMilestone.step_id == step_id))
         s.add(m)
         s.commit()
     from . import audit as auditmod

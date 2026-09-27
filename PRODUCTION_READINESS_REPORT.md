@@ -6,7 +6,7 @@
 **Status:** Technical foundation complete, legal/organizational steps pending approval.
 
 The Civic Path Navigator application has a solid technical base with:
-- 39 passing tests (up from 29)
+- 65 passing tests
 - Clean frontend build
 - DPDP Act compliance features implemented
 - Security hardening in place
@@ -19,7 +19,7 @@ However, **government approval requires additional organizational and legal step
 ## Technical Status ✅
 
 ### Code Quality
-- [x] Backend: 39 pytest tests passing
+- [x] Backend: 65 pytest tests passing
 - [x] Frontend: TypeScript, builds clean
 - [x] CI/CD: GitHub Actions configured (backend + frontend jobs)
 - [x] No TODO/FIXME/HACK markers in codebase
@@ -66,6 +66,7 @@ However, **government approval requires additional organizational and legal step
 | Telegram bot token | ❌ Missing | Create bot via @BotFather, add to .env |
 | DigiLocker credentials | ❌ Missing | Register at partners.apisetu.gov.in |
 | Database migration | ⚠️ SQLite | Migrate to Postgres for production |
+| nltk PYSEC-2026-3740 | ⚠️ No fix released | Transitive via crawl4ai; only hardcoded corpus paths used (not reachable from input). Re-run `pip-audit` when nltk > 3.10.3 ships |
 
 ### Short-term (Week 1-2)
 

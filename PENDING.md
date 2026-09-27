@@ -23,7 +23,7 @@ Ordered by unblock-value. Checked items are done; unchecked need you or a key.
 
 ## Product gaps (build next)
 - [x] **Real browser click-through** — Playwright: register → dashboard → roadmap green (`smoke.png`).
-- [x] **pytest suite (49 tests) + GitHub Actions CI** — backend + frontend build.
+- [x] **pytest suite (65 tests) + GitHub Actions CI** — backend + frontend build.
 - [x] **page-agent Guide-me** — installed, per-step Q&A with user's own key (app key never leaves server).
 - [x] **Postgres-ready** — `psycopg` driver in, URL-driven; needs a server to go live.
 - [ ] **Hermes worker rebuild** — source absent; only `alerts.py` + webhook exist.
@@ -52,7 +52,8 @@ Ordered by unblock-value. Checked items are done; unchecked need you or a key.
   `/admin/maps/{slug}/steps` + editor UI + audit log), explicit type-of-service
   input (form → `/build-task` → job → `TaskMap.service_type` → API → UI),
   per-step application/form deep links (`link` field: heuristic URL extraction
-  + LLM, hallucination-proof validation). 62 pytest tests green.
+  + LLM with page-grounding — the URL must literally appear in the fetched
+  page — plus gov-domain check and reachability probe). 65 pytest tests green.
 - [x] **Secrets** — rotation, 2h TTL, boot refusal without APP_SECRET.
 - [x] **Observability** — JSON logs + `/admin/metrics`.
 - [x] **Backups** — online snapshots to E: + retention + endpoints.

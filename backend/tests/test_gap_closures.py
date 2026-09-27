@@ -149,7 +149,8 @@ def test_heuristic_extracts_deep_links():
 
 
 def test_llm_links_are_hallucination_proof(monkeypatch):
-    """Foreign-host LLM links are dropped; same-host / gov links kept."""
+    """Foreign-host links dropped; same-host links kept ONLY when they
+    literally appear in the fetched page (source-grounding)."""
     from app import worker as W
     from app import llm as llmmod
 
@@ -160,15 +161,50 @@ def test_llm_links_are_hallucination_proof(monkeypatch):
          "fee": "100", "link": "https://dept.gov.in/pay"},
         {"id": "c", "type": "prereq", "title": "Get form", "detail": "x",
          "fee": "", "link": "not-a-url"},
+        {"id": "d", "type": "action", "title": "Other form", "detail": "x",
+         "fee": "", "link": "https://dept.gov.in/forms/never-mentioned"},
     ])
     monkeypatch.setattr(llmmod, "_chat_raw", lambda prompt: (raw, "model"))
-    steps = W.llm_extract("page text " * 20, "https://dept.gov.in/page", "task")
+    text = "Pay the fee online at https://dept.gov.in/pay within 7 days."
+    steps = W.llm_extract(text, "https://dept.gov.in/page", "task")
     links = {s["id"]: s["link"] for s in steps}
-    assert links["a"] == ""            # phishing host dropped
-    assert links["b"] == "https://dept.gov.in/pay"
+    assert links["a"] == ""            # foreign host dropped
+    assert links["b"] == "https://dept.gov.in/pay"   # on the page -> kept
     assert links["c"] == ""            # malformed dropped
+    assert links["d"] == ""            # gov host but absent from page
     # source proof link never overwritten
     assert all(s["url"] == "https://dept.gov.in/page" for s in steps)
+
+
+def test_probe_link_drops_dead_and_keeps_indeterminate(monkeypatch):
+    import urllib.error
+    import urllib.request
+    from app import worker as W
+
+    monkeypatch.setenv("LINK_PROBE", "1")
+
+    def dead(link, *a, **k):
+        raise urllib.error.HTTPError(link, 404, "Not Found", {}, None)
+    monkeypatch.setattr(urllib.request, "urlopen", dead)
+    assert W.probe_link("https://dept.gov.in/gone") is False
+
+    def offline(link, *a, **k):
+        raise OSError("offline")
+    monkeypatch.setattr(urllib.request, "urlopen", offline)
+    assert W.probe_link("https://dept.gov.in/x") is None
+
+    monkeypatch.setattr(W, "probe_link",
+                        lambda link, timeout=4.0: False if "gone" in link else None)
+    nodes = [{"link": "https://dept.gov.in/gone"},
+             {"link": "https://dept.gov.in/keep"},
+             {"link": ""}]
+    W.verify_links(nodes)
+    assert nodes[0]["link"] == ""
+    assert nodes[1]["link"] == "https://dept.gov.in/keep"
+    assert nodes[2]["link"] == ""
+
+    monkeypatch.setenv("LINK_PROBE", "0")
+    assert W.probe_link("https://dept.gov.in/any") is None
 
 
 def test_build_map_nodes_carry_link(monkeypatch):
@@ -300,6 +336,70 @@ def test_admin_step_edit_requires_admin(client, user):
     r = client.put("/admin/maps/edit-map/steps/a", headers=user["headers"],
                    json={"title": "hijack"})
     assert r.status_code == 403
+
+
+def test_step_mutations_revoke_approval_and_clean_progress(client, admin, user,
+                                                           monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from sqlmodel import Session
+    from app import main as M
+    from app.models import Progress, RoadmapMilestone, TaskMap, User
+    monkeypatch.setattr(M, "_validate_fetch_url", lambda u: u)
+    _seed_edit_map()
+
+    def verified_flag() -> bool:
+        with Session(M.engine) as s:
+            m = s.exec(select(TaskMap).where(TaskMap.slug == "edit-map")).first()
+            return m.verified_at is not None
+
+    r = client.post("/admin/maps/edit-map/verify", headers=admin["headers"],
+                    json={"verified": True})
+    assert r.status_code == 200, r.text
+    assert verified_flag()
+
+    with Session(M.engine) as s:
+        who = s.exec(select(User).where(User.email == user["email"])).first()
+        s.add(Progress(user_id=who.id, map_slug="edit-map", step_id="a"))
+        s.add(RoadmapMilestone(user_id=who.id, map_slug="edit-map", step_id="a",
+                               due_at=datetime.now(timezone.utc) + timedelta(days=7)))
+        s.commit()
+
+    # editing an approved map revokes approval
+    r = client.put("/admin/maps/edit-map/steps/a", headers=admin["headers"],
+                   json={"title": "Edited on approved map"})
+    assert r.status_code == 200, r.text
+    assert not verified_flag()
+
+    # delete -> approval revoked AND the step's progress/milestone removed
+    client.post("/admin/maps/edit-map/verify", headers=admin["headers"],
+                json={"verified": True})
+    r = client.delete("/admin/maps/edit-map/steps/a", headers=admin["headers"])
+    assert r.status_code == 200, r.text
+    assert not verified_flag()
+    with Session(M.engine) as s:
+        assert s.exec(select(Progress).where(Progress.map_slug == "edit-map",
+                                             Progress.step_id == "a")).first() is None
+        assert s.exec(select(RoadmapMilestone).where(
+            RoadmapMilestone.map_slug == "edit-map",
+            RoadmapMilestone.step_id == "a")).first() is None
+
+    # adding a step also revokes approval
+    client.post("/admin/maps/edit-map/verify", headers=admin["headers"],
+                json={"verified": True})
+    r = client.post("/admin/maps/edit-map/steps", headers=admin["headers"],
+                    json={"title": "Fresh step"})
+    assert r.status_code == 200, r.text
+    assert not verified_flag()
+
+
+def test_cors_preflight_allows_admin_methods(client):
+    for method in ("PUT", "DELETE", "POST"):
+        r = client.options("/admin/maps/edit-map/steps/a", headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": method,
+            "Access-Control-Request-Headers": "authorization,content-type"})
+        assert r.status_code == 200, (method, r.status_code, r.text)
+        assert method in r.headers.get("access-control-allow-methods", "")
 
 
 # ---------------- Gap 4: type-of-service end-to-end ----------------

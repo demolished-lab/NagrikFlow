@@ -6,8 +6,12 @@ Then LLM extraction (Ollama -> Bynara) into the civic Step schema;
 regex fallback keeps the pipeline working with zero LLM.
 Every field keeps source_url + fetched_at. No proof link = dropped.
 """
+import html
+import os
 import re
 import subprocess
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -123,6 +127,47 @@ def pick_link(text: str, source_url: str, hints=LINK_HINTS) -> str:
     return best
 
 
+def page_has_link(link: str, text: str) -> bool:
+    """Source-grounding: the exact deep link must literally appear in the
+    fetched page text (an LLM cannot invent a URL that was never there)."""
+    if not link or not text:
+        return False
+    norm = link.rstrip(".,;:'\")").rstrip("/")
+    for raw in URL_RE.findall(html.unescape(text)):
+        if raw.rstrip(".,;:'\")").rstrip("/") == norm:
+            return True
+    return False
+
+
+def probe_link(link: str, timeout: float = 4.0):
+    """Reachability probe: True = server answers, False = provably dead
+    (404/410), None = indeterminate (DNS/timeout/WAF) -> link is kept."""
+    if os.environ.get("LINK_PROBE", "1") == "0":
+        return None
+    req = urllib.request.Request(link, method="HEAD", headers={"User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status not in (404, 410)
+    except urllib.error.HTTPError as e:
+        if e.code in (404, 410):
+            return False
+        return True  # server answered (incl. 403/405 bot-walls, 5xx)
+    except Exception:
+        return None
+
+
+def verify_links(nodes: list[dict]) -> None:
+    """Best-effort reachability sweep: drop provably dead deep links (capped)."""
+    probed = 0
+    for n in nodes:
+        link = n.get("link")
+        if not link or probed >= 10:
+            continue
+        probed += 1
+        if probe_link(link) is False:
+            n["link"] = ""
+
+
 def heuristic_extract(text: str, url: str) -> list[dict]:
     """Zero-LLM fallback: fees + document mentions + official links -> steps."""
     fees = sorted(set(FEE_RE.findall(text)))[:5]
@@ -159,6 +204,8 @@ def llm_extract(text: str, url: str, task: str) -> list[dict]:
         for s in steps:
             s["url"] = url
             s["link"] = clean_link(s.get("link", ""), url)
+            if s["link"] and not page_has_link(s["link"], text):
+                s["link"] = ""  # absent from the fetched page -> hallucinated
         return steps[:8] if steps else heuristic_extract(text, url)
     except Exception:
         return heuristic_extract(text, url)
@@ -418,6 +465,8 @@ def build_map(task: str, urls: list[str], city: str = "", state: str = "",
     bridge_disconnected(edges, edge_sources, nodes, per_source)
     _add_edges(edges, edge_sources, llm_infer_edges(task, nodes),
                "inferred: LLM prerequisite model", node_ids, cap)
+
+    verify_links(nodes)
 
     return {"nodes": nodes, "edges": edges, "edge_sources": edge_sources,
             "sources": sources, "city": city, "state": state,

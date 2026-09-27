@@ -8,3 +8,9 @@ psycopg[binary]>=3.1  # Postgres driver; activate via DATABASE_URL=postgresql://
 trafilatura>=1.12
 crawl4ai>=0.5  # Tier-2 JS rendering fallback (webpages requiring execution)
 python-dotenv>=1.0  # Load .env files
+# nltk arrives transitively via crawl4ai (not imported by this app directly).
+# pip-audit flags nltk 3.10.3 (PYSEC-2026-3740, path traversal in model-artifact
+# APIs). Not reachable: crawl4ai only calls nltk with hardcoded corpus paths
+# (nltk.data.find("tokenizers/punkt"), sent_tokenize, word_tokenize) - no
+# caller-controlled path. No fixed release exists (3.10.3 is latest on PyPI);
+# re-run `python -m pip_audit` when nltk > 3.10.3 appears.
