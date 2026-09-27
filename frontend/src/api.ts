@@ -1,5 +1,4 @@
-// Prod: set VITE_API_URL to the backend tunnel URL (e.g. https://api-xxx.trycloudflare.com).
-// Dev: falls back to vite proxy (/api -> localhost:8000).
+// Prod: set VITE_API_URL to the backend URL. Dev: Vite proxies /api to localhost:8000.
 const API = (import.meta as any).env?.VITE_API_URL || '/api';
 
 function headers(): Record<string, string> {
@@ -9,7 +8,10 @@ function headers(): Record<string, string> {
 
 export async function req(path: string, opts: RequestInit = {}): Promise<any> {
   const r = await fetch(API + path, { ...opts, headers: { ...headers(), ...(opts.headers || {}) } });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail || r.statusText);
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(body.detail || r.statusText);
+  }
   return r.json();
 }
 
@@ -19,11 +21,12 @@ export const api = {
   dashboard: () => req('/me/dashboard'),
   profile: () => req('/me/profile'),
   brief: () => req('/me/brief'),
+  myPathways: () => req('/me/pathways'),
   map: (slug: string, filters: Record<string, string> = {}) => {
     const query = new URLSearchParams(
       Object.entries(filters).filter(([, value]) => Boolean(value)),
     ).toString();
-    return req(`/maps/${slug}${query ? `?${query}` : ''}`);
+    return req(`/maps/${encodeURIComponent(slug)}${query ? `?${query}` : ''}`);
   },
   done: (map_slug: string, step_id: string) =>
     req('/me/progress', { method: 'POST', body: JSON.stringify({ map_slug, step_id }) }),
@@ -38,7 +41,7 @@ export const api = {
   buildTask: (task: string, city?: string, state?: string) =>
     req('/build-task', { method: 'POST', body: JSON.stringify({ task, city, state }) }),
   jobStatus: (jobId: number) => req(`/jobs/${jobId}`),
-  taskMap: (slug: string) => req(`/task/${slug}`),
+  taskMap: (slug: string) => req(`/task/${encodeURIComponent(slug)}`),
   // Agent API
   agentRun: (task: string, mode: string, budget: number) =>
     req('/agent/run', { method: 'POST', body: JSON.stringify({ task, mode, budget }) }),

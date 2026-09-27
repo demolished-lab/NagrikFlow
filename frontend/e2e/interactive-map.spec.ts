@@ -22,16 +22,37 @@ function mapResponse(query = '') {
     slug: 'udyam-register',
     title: 'Register a small business',
     city: 'Hyderabad',
+    state: 'Telangana',
     graph: { nodes: visible, edges: edges.filter(([from, to]) => ids.has(from) && ids.has(to)) },
     filters: { types: ['action', 'prereq'], statuses: ['action', 'ready'], total: nodes.length },
     sources: ['https://udyamregistration.gov.in/'],
+    verified: true,
   };
 }
+
+const savedPathway = {
+  job_id: 21,
+  slug: 'udyam-register',
+  title: 'Register a small business',
+  city: 'Hyderabad',
+  state: 'Telangana',
+  status: 'verified',
+  verified: true,
+  steps: 4,
+  completed: 1,
+  completed_steps: ['aadhaar'],
+  steps_preview: nodes.slice(0, 4).map(({ id, title, detail, url, type }) => ({ id, title, detail, url, type })),
+  sources: ['https://udyamregistration.gov.in/'],
+  created_at: '2026-09-27T08:00:00Z',
+};
 
 async function mockAuthenticatedApi(page: import('@playwright/test').Page) {
   await page.addInitScript(() => localStorage.setItem('civic_token', 'e2e-token'));
   await page.route('**/api/me/profile', async (route) => {
-    await route.fulfill({ json: { id: 7, email: 'citizen@example.com', role: 'citizen' } });
+    await route.fulfill({ json: { id: 7, email: 'citizen@example.com', name: 'Test Citizen', city: 'Hyderabad', state: 'Telangana', role: 'citizen' } });
+  });
+  await page.route('**/api/me/pathways', async (route) => {
+    await route.fulfill({ json: [savedPathway] });
   });
   await page.route('**/api/maps/udyam-register*', async (route) => {
     const url = new URL(route.request().url());
@@ -52,27 +73,39 @@ async function mockAuthenticatedApi(page: import('@playwright/test').Page) {
   });
 }
 
-test('user can authenticate and reach the personalized dashboard shell', async ({ page }) => {
+test('user can authenticate and reach the personalized concierge home', async ({ page }) => {
   await page.route('**/api/auth/login', async (route) => {
     await route.fulfill({ json: { token: 'e2e-auth-token', user_id: 7 } });
   });
   await page.route('**/api/me/profile', async (route) => {
-    await route.fulfill({ json: { id: 7, email: 'citizen@example.com', role: 'citizen' } });
+    await route.fulfill({ json: { id: 7, email: 'citizen@example.com', name: 'Test Citizen', city: 'Hyderabad', state: 'Telangana', role: 'citizen' } });
   });
+  await page.route('**/api/me/pathways', async (route) => route.fulfill({ json: [] }));
   await page.goto('/');
   await page.getByRole('button', { name: 'Login' }).first().click();
   await page.getByLabel('Email').fill('citizen@example.com');
   await page.getByLabel('Password').fill('correct-horse-battery-staple');
   await page.getByRole('button', { name: 'Login' }).last().click();
-  await expect(page.getByText('Your civic twin')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What do you need to get done?' })).toBeVisible();
+  await expect(page.getByLabel('Describe your civic task')).toBeVisible();
+  await expect(page.getByLabel('City')).toHaveValue('Hyderabad');
   await expect(page.evaluate(() => localStorage.getItem('civic_token'))).resolves.toBe('e2e-auth-token');
 });
 
-test('interactive map filters are sent to the backend and update visible nodes', async ({ page }) => {
+test('My pathways lists saved server data and opens its roadmap', async ({ page }) => {
   await mockAuthenticatedApi(page);
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Path Builder' }).click();
-  await expect(page.getByText('VERIFIED CIVIC MAP')).toBeVisible();
+  await page.goto('/#/pathways');
+  await expect(page.getByRole('heading', { name: 'My pathways' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Register a small business' })).toBeVisible();
+  await expect(page.getByText('Reviewed and ready')).toBeVisible();
+  await page.getByRole('button', { name: 'Open pathway' }).click();
+  await expect(page.getByText('REVIEWED CIVIC PATHWAY')).toBeVisible();
+});
+
+test('pathway map filters are sent to the backend and update visible steps', async ({ page }) => {
+  await mockAuthenticatedApi(page);
+  await page.goto('/#/roadmap/udyam-register');
+  await expect(page.getByText('REVIEWED CIVIC PATHWAY')).toBeVisible();
   await expect(page.getByText('Have Aadhaar')).toBeVisible();
   await expect(page.getByText('Udyam Registration')).toBeVisible();
 
@@ -81,11 +114,11 @@ test('interactive map filters are sent to the backend and update visible nodes',
   await expect(page.getByText('Have Aadhaar')).toHaveCount(0);
   await expect(page.getByText('Filters are synced with the API')).toBeVisible();
 
-  await page.getByRole('button', { name: 'List' }).click();
-  await expect(page.getByRole('heading', { name: 'GST Registration' })).toBeVisible();
+  await page.locator('.cv-view-toggle button').nth(1).click();
+  await expect(page.getByRole('button', { name: /Map/ })).toBeVisible();
 });
 
-test('personalized progress is visible and marking a step done updates the map', async ({ page }) => {
+test('saved pathway progress and documents dashboard remain connected', async ({ page }) => {
   await mockAuthenticatedApi(page);
   await page.route('**/api/me/dashboard', async (route) => {
     await route.fulfill({ json: { have: ['Aadhaar'], next_easiest: [], in_progress_maps: { 'udyam-register': 1 }, user: { name: 'Test Citizen' } } });
@@ -93,15 +126,48 @@ test('personalized progress is visible and marking a step done updates the map',
   await page.route('**/api/me/brief', async (route) => {
     await route.fulfill({ json: { brief: 'Your next step is ready.', via: 'test' } });
   });
-  await page.goto('/');
-  await page.locator('.cv-nav-item').filter({ hasText: 'Civic Twin' }).click();
+  await page.goto('/#/documents');
   await expect(page.getByText('Welcome back, Test Citizen')).toBeVisible();
   await expect(page.getByText('PERSONAL PROGRESS')).toBeVisible();
   await expect(page.getByText('1 of 4 steps completed')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Path Builder' }).click();
-  await page.getByRole('button', { name: 'List' }).click();
-  await page.getByText('Udyam Registration').click();
-  await page.locator('.cv-map-detail').getByRole('button', { name: /Mark done/i }).click();
-  await expect(page.locator('.cv-map-detail .cv-status', { hasText: 'Verified' })).toBeVisible();
+  await page.goto('/#/roadmap/udyam-register');
+  const udyamStep = page.locator('.cv-filtered-step').filter({ hasText: 'Udyam Registration' });
+  await udyamStep.getByRole('button', { name: 'Mark complete' }).click();
+  await expect(udyamStep.getByText('Complete')).toBeVisible();
+});
+
+test('task build result is reflected from the saved API pathway and review status', async ({ page }) => {
+  await mockAuthenticatedApi(page);
+  let submitted: any = null;
+  await page.route('**/api/build-task', async (route) => {
+    submitted = route.request().postDataJSON();
+    await route.fulfill({ json: { job_id: 101, slug: 'new-water-connection' } });
+  });
+  await page.route('**/api/jobs/101', async (route) => {
+    await route.fulfill({ json: { status: 'done', result: { slug: 'new-water-connection' } } });
+  });
+  await page.route('**/api/task/new-water-connection', async (route) => {
+    await route.fulfill({ json: { slug: 'new-water-connection', title: 'Get a water connection', city: 'Pune', state: 'Maharashtra', graph: { nodes, edges }, sources: ['https://example.gov.in'], verified: false } });
+  });
+  await page.route('**/api/maps/new-water-connection*', async (route) => {
+    await route.fulfill({ json: { slug: 'new-water-connection', title: 'Get a water connection', city: 'Pune', state: 'Maharashtra', graph: { nodes, edges }, filters: { types: ['action', 'prereq'], statuses: ['action', 'ready'], total: nodes.length }, sources: ['https://example.gov.in'], verified: false } });
+  });
+  await page.route('**/api/me/progress/new-water-connection', async (route) => {
+    await route.fulfill({ json: { steps: [] } });
+  });
+  await page.route('**/api/me/pathways', async (route) => {
+    await route.fulfill({ json: [{ ...savedPathway, slug: 'new-water-connection', title: 'Get a water connection', city: 'Pune', state: 'Maharashtra', status: 'review_required', verified: false }] });
+  });
+
+  await page.goto('/');
+  await page.getByLabel('Describe your civic task').fill('Get a water connection');
+  await page.getByLabel('City').fill('Pune');
+  await page.getByLabel('State').fill('Maharashtra');
+  await page.getByRole('button', { name: 'Build my pathway' }).click();
+  await expect(page.getByText('Your pathway was built and is awaiting source review.')).toBeVisible({ timeout: 10000 });
+  expect(submitted).toMatchObject({ task: 'Get a water connection', city: 'Pune', state: 'Maharashtra' });
+  await page.getByRole('button', { name: 'Preview pathway' }).click();
+  await expect(page.getByText('DRAFT PATHWAY')).toBeVisible();
+  await expect(page.getByText('This pathway is awaiting source review.')).toBeVisible();
 });

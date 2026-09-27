@@ -344,6 +344,60 @@ def profile(user: User = Depends(current_user)):
             "role": "admin" if user.is_admin else "citizen"}
 
 
+@app.get("/me/pathways")
+def my_pathways(user: User = Depends(current_user)):
+    """List only pathways requested by this user, joined to their saved maps."""
+    with Session(engine) as s:
+        jobs = s.exec(select(Job).where(
+            Job.created_by == user.id, Job.kind == "build"
+        ).order_by(Job.created_at.desc()).limit(50)).all()
+        pathways = []
+        for job in jobs:
+            try:
+                request_data = json.loads(job.payload or "{}")
+                result_data = json.loads(job.result or "{}")
+            except (TypeError, json.JSONDecodeError):
+                request_data, result_data = {}, {}
+            slug = result_data.get("slug") or request_data.get("slug")
+            if not slug:
+                continue
+            task_map = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
+            graph = json.loads(task_map.graph_json) if task_map else {"nodes": [], "edges": []}
+            nodes = graph.get("nodes", [])
+            completed = s.exec(select(Progress).where(
+                Progress.user_id == user.id, Progress.map_slug == slug
+            )).all() if task_map else []
+            if job.status == "failed":
+                status = "failed"
+            elif not task_map:
+                status = job.status
+            else:
+                status = "verified" if task_map.verified_at else "review_required"
+            try:
+                sources = json.loads(task_map.source_urls or "[]") if task_map else []
+            except json.JSONDecodeError:
+                sources = []
+            pathways.append({
+                "job_id": job.id,
+                "slug": slug,
+                "title": task_map.title if task_map else request_data.get("task", "Civic pathway"),
+                "city": (task_map.city or request_data.get("city", "")) if task_map else request_data.get("city", ""),
+                "state": (task_map.state or request_data.get("state", "")) if task_map else request_data.get("state", ""),
+                "status": status,
+                "verified": bool(task_map and task_map.verified_at),
+                "verified_at": task_map.verified_at.isoformat() if task_map and task_map.verified_at else None,
+                "steps": len(nodes),
+                "completed": len(completed),
+                "completed_steps": [item.step_id for item in completed],
+                "steps_preview": [{key: node.get(key, "") for key in ("id", "title", "detail", "url", "type")}
+                                  for node in nodes[:4]],
+                "sources": sources,
+                "created_at": job.created_at.isoformat(),
+                "error": result_data.get("error", "") if job.status == "failed" else "",
+            })
+        return pathways
+
+
 @app.get("/me/brief")
 def brief(user: User = Depends(current_user)):
     """LLM-phrased plain-words summary of your dashboard (local first)."""
@@ -396,7 +450,7 @@ def get_map(
         "statuses": sorted({node_status(node) for node in all_nodes}),
         "total": len(all_nodes),
     }
-    return {"slug": m.slug, "title": m.title, "city": m.city,
+    return {"slug": m.slug, "title": m.title, "city": m.city, "state": m.state,
             "graph": {"nodes": filtered_nodes, "edges": filtered_edges},
             "filters": filter_options, "sources": json.loads(m.source_urls),
             "verified": bool(m.verified_at),
