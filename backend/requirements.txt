@@ -6,3 +6,5 @@ httpx>=0.28
 email-validator>=2.0
 psycopg[binary]>=3.1  # Postgres driver; activate via DATABASE_URL=postgresql://...
 trafilatura>=1.12
+crawl4ai>=0.5  # Tier-2 JS rendering fallback (webpages requiring execution)
+python-dotenv>=1.0  # Load .env files

@@ -8,11 +8,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Header
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from .https_middleware import HTTPSRedirectMiddleware
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -46,6 +47,8 @@ from . import edge as edgemod  # noqa: E402
 from . import agent as agentmod  # noqa: E402
 from . import hermes_core as hermesmod  # noqa: E402
 from . import hermes_subagents as submod  # noqa: E402
+from . import telegram_validate as tgramval  # noqa: E402
+from . import llm_health as llmhealth  # noqa: E402
 from fastapi import BackgroundTasks as _BT  # noqa: E402
 from .models import (Consent, Grievance, Job, LinkCode, Notification, OAuthState,
                      OtpCode, Progress, RoadmapMilestone, TaskMap, User, VaultItem)
@@ -71,6 +74,11 @@ app.add_middleware(
 app.middleware("http")(secmod.rate_limit_middleware)
 app.middleware("http")(obsmod.obs_middleware)
 edgemod.install(app)
+
+# Add HTTPS redirect middleware if configured for production
+if os.environ.get("FORCE_HTTPS", "").lower() == "true":
+    from .https_middleware import HTTPSRedirectMiddleware
+    app.add_middleware(HTTPSRedirectMiddleware)
 
 
 def current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> User:
@@ -137,6 +145,12 @@ _init_db()
 @app.get("/health")
 def health():
     return {"ok": True, "digilocker_env": dg.ENV}
+
+
+@app.get("/health/llm")
+async def health_llm():
+    """Check LLM backend availability (Bynara + Ollama)."""
+    return await llmhealth.health_check()
 
 
 @app.post("/auth/register")
@@ -576,8 +590,13 @@ def telegram_link_code(user: User = Depends(current_user)):
 
 
 @app.post("/hooks/telegram")
-def telegram_webhook(body: dict):
+def telegram_webhook(body: dict, x_telegram_token: str = Header(default=None)):
     """Bot API webhook. Binds chat_id via link code; enforces expiry + single use."""
+    # Validate Telegram webhook secret if configured
+    try:
+        tgramval.check(x_telegram_token)
+    except ValueError as e:
+        raise HTTPException(401, str(e))
     from datetime import datetime, timedelta, timezone
     try:
         msg = body.get("message", {})
