@@ -1,6 +1,8 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { STR, lang } from './i18n';
+
+type AgentTab = 'chat' | 'tools' | 'audit';
 
 export default function AgentPanel() {
   const t = STR[lang()];
@@ -10,163 +12,80 @@ export default function AgentPanel() {
   const [err, setErr] = useState('');
   const [audit, setAudit] = useState<any[]>([]);
   const [tools, setTools] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'chat' | 'tools' | 'audit'>('chat');
+  const [activeTab, setActiveTab] = useState<AgentTab>('chat');
   const pollRef = useRef<number | null>(null);
 
   const runAgent = async () => {
-    if (!task.trim()) return;
+    if (!task.trim() || running) return;
     setRunning(true);
     setResult(null);
     setErr('');
     try {
       const { job_id } = await api.hermesRun(task, 'auto', 30);
-      // Poll for result
       const poll = async () => {
         try {
-          const j = await api.hermesResult(job_id);
-          if (j.status === 'done' || j.status === 'failed' || j.status === 'timeout') {
-            setResult(j);
+          const job = await api.hermesResult(job_id);
+          if (job.status === 'done' || job.status === 'failed' || job.status === 'timeout') {
+            setResult(job);
             setRunning(false);
-            if (pollRef.current) clearInterval(pollRef.current);
+            if (pollRef.current !== null) window.clearInterval(pollRef.current);
           }
-        } catch { /* ignore transient errors */ }
+        } catch { /* Ignore transient poll errors and retry on the next interval. */ }
       };
-      poll(); // check immediately
-      pollRef.current = window.setInterval(poll, 3000);
-      // Cleanup on unmount
-      setTimeout(() => { if (pollRef.current) clearInterval(pollRef.current); }, 600_000);
-    } catch (e: any) {
-      setErr(String(e.message || e));
+      void poll();
+      pollRef.current = window.setInterval(() => { void poll(); }, 3000);
+      window.setTimeout(() => { if (pollRef.current !== null) window.clearInterval(pollRef.current); }, 600_000);
+    } catch (error: any) {
+      setErr(String(error.message || error));
       setRunning(false);
     }
   };
 
   useEffect(() => {
-    Promise.all([
+    void Promise.all([
       api.hermesAudit(30).then(setAudit).catch(() => {}),
-      api.hermesTools().then(r => setTools(r.tools || [])).catch(() => {})
+      api.hermesTools().then((response) => setTools(response.tools || [])).catch(() => {}),
     ]);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => { if (pollRef.current !== null) window.clearInterval(pollRef.current); };
   }, []);
 
-  return (
-    <div style={{ display: 'grid', gap: 16, maxWidth: 900 }}>
-      {/* Tab Navigation */}
-      <div style={{ display: 'flex', gap: 8, borderBottom: '2px solid var(--line)', marginBottom: 8 }}>
-        {(['chat', 'tools', 'audit'] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            style={{
-              padding: '8px 16px',
-              borderRadius: '8px 8px 0 0',
-              border: 'none',
-              borderBottom: activeTab === tab ? '2px solid var(--saffron)' : '2px solid transparent',
-              background: activeTab === tab ? 'rgba(249,115,22,0.1)' : 'transparent',
-              color: activeTab === tab ? 'var(--saffron)' : 'var(--ink-2)',
-              fontWeight: activeTab === tab ? 600 : 500,
-              cursor: 'pointer',
-              fontSize: 14,
-            }}
-          >
-            {tab === 'chat' && '💬 '}
-            {tab === 'tools' && '🔧 '}
-            {tab === 'audit' && '📋 '}
-            {tab.toUpperCase()}
-          </button>
-        ))}
-      </div>
+  const tabs: { id: AgentTab; label: string }[] = [
+    { id: 'chat', label: 'Research agent' },
+    { id: 'tools', label: 'Available tools' },
+    { id: 'audit', label: 'Activity log' },
+  ];
+  const resultTitle = result?.status === 'done' ? t.agentStatusDone : result?.status === 'failed' ? t.agentStatusFailed : t.agentStatusTimeout;
 
-      {/* Chat Tab */}
-      {activeTab === 'chat' && (
-        <div style={{ border: '1px solid #ddd', borderRadius: 10, padding: 16, background: '#fafafa' }}>
-          <h3 style={{ margin: '0 0 8px' }}>🤖 {t.agentTitle}</h3>
-          <p style={{ fontSize: 13, color: '#666', margin: '0 0 12px' }}>{t.agentDesc}</p>
-          <textarea
-            placeholder={t.agentInput}
-            value={task}
-            onChange={(e) => setTask(e.target.value)}
-            rows={4}
-            style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid #ccc', fontSize: 14, resize: 'vertical', boxSizing: 'border-box' }}
-          />
-          <button
-            onClick={runAgent}
-            disabled={running || !task.trim()}
-            style={{
-              marginTop: 10, padding: '10px 24px', borderRadius: 8, border: 'none',
-              background: running ? '#ccc' : '#2563eb', color: '#fff', cursor: running ? 'not-allowed' : 'pointer',
-              fontWeight: 600, fontSize: 14,
-            }}
-          >
-            {running ? `⏳ ${t.agentRunning}` : `▶ ${t.agentRun}`}
-          </button>
-          {err && <p role="alert" style={{ color: 'red', marginTop: 8 }}>{err}</p>}
-        </div>
-      )}
+  return <div className="cv-agent-view cv-anim-up">
+    <header className="cv-page-heading cv-agent-heading"><div><span className="cv-eyebrow">ADMIN TOOLS</span><h1>Research workspace</h1><p>Run an assisted research task and review its tool activity.</p></div></header>
 
-      {/* Tools Tab */}
-      {activeTab === 'tools' && (
-        <div style={{ border: '1px solid #ddd', borderRadius: 10, padding: 16 }}>
-          <h4 style={{ margin: '0 0 12px' }}>🔧 {t.agentTools} ({tools.length})</h4>
-          <div style={{ display: 'grid', gap: 8 }}>
-            {tools.map((tool: any, i: number) => (
-              <div key={i} style={{ padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid var(--line)' }}>
-                <div style={{ fontWeight: 600, color: 'var(--indigo)' }}>{tool.name}</div>
-                <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>{tool.description}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Audit Tab */}
-      {activeTab === 'audit' && (
-        <div style={{ border: '1px solid #ddd', borderRadius: 10, padding: 16 }}>
-          <h4 style={{ margin: '0 0 12px' }}>📋 {t.agentAudit}</h4>
-          {audit.length === 0 ? (
-            <p style={{ color: '#888' }}>No audit entries yet.</p>
-          ) : (
-            <div style={{ maxHeight: 400, overflowY: 'auto', fontSize: 12, fontFamily: 'monospace' }}>
-              {audit.map((e: any, i: number) => (
-                <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid #eee' }}>
-                  <span style={{ color: '#888' }}>{new Date(e.ts).toLocaleString()}</span>
-                  {' '}<b>{e.action}</b> → {e.target}
-                  {' '}<span style={{ color: e.success === false ? 'red' : 'green' }}>{e.success === false ? '✗' : '✓'}</span>
-                  {': '}{e.summary?.slice(0, 80)}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Result Display */}
-      {result && (
-        <div style={{ border: '1px solid #ddd', borderRadius: 10, padding: 16, background: result.status === 'done' ? '#f0fdf4' : '#fef2f2' }}>
-          <h4 style={{ margin: '0 0 8px' }}>
-            {result.status === 'done' ? t.agentStatusDone : result.status === 'failed' ? t.agentStatusFailed : t.agentStatusTimeout}
-            <span style={{ fontSize: 12, color: '#666', fontWeight: 400 }}>
-              {' '}— {result.turns} {t.agentTurns}, {result.elapsed_secs}s {t.agentTime} ({result.via})
-            </span>
-          </h4>
-          {result.final && (
-            <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.6, color: '#333' }}>
-              {result.final.slice(0, 3000)}
-              {result.final.length > 3000 && '...'}
-            </div>
-          )}
-          {result.errors && result.errors.length > 0 && (
-            <div style={{ marginTop: 12, padding: 12, background: '#fee2e2', borderRadius: 8, fontSize: 13 }}>
-              <b>Errors:</b>
-              <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
-                {result.errors.map((e: string, i: number) => (
-                  <li key={i}>{e}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+    <div className="cv-agent-tabs" role="tablist" aria-label="Research workspace sections">
+      {tabs.map((tab) => <button key={tab.id} type="button" role="tab" id={`agent-tab-${tab.id}`} aria-selected={activeTab === tab.id} aria-controls={`agent-panel-${tab.id}`} className={`cv-agent-tab ${activeTab === tab.id ? 'is-active' : ''}`} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>)}
     </div>
-  );
+
+    {activeTab === 'chat' && <section className="cv-agent-card" role="tabpanel" id="agent-panel-chat" aria-labelledby="agent-tab-chat">
+      <h2>{t.agentTitle}</h2><p>{t.agentDesc}</p>
+      <label className="sr-only" htmlFor="agent-task">Research task</label>
+      <textarea id="agent-task" placeholder={t.agentInput} value={task} onChange={(event) => setTask(event.target.value)} rows={4}/>
+      {err && <div className="cv-admin-notice is-error" role="alert">{err}</div>}
+      <button className="cv-agent-run" type="button" onClick={() => void runAgent()} disabled={running || !task.trim()}>{running ? t.agentRunning : t.agentRun}</button>
+      {running && <p className="cv-muted" role="status">Research is running. This page will update when the result is ready.</p>}
+    </section>}
+
+    {activeTab === 'tools' && <section className="cv-agent-card" role="tabpanel" id="agent-panel-tools" aria-labelledby="agent-tab-tools">
+      <h2>{t.agentTools} <span className="cv-muted">({tools.length})</span></h2>
+      {tools.length ? <div className="cv-agent-tools">{tools.map((tool: any, index) => <article className="cv-agent-tool" key={`${tool.name}-${index}`}><strong>{tool.name}</strong><p>{tool.description}</p></article>)}</div> : <p>No research tools are available right now.</p>}
+    </section>}
+
+    {activeTab === 'audit' && <section className="cv-agent-card" role="tabpanel" id="agent-panel-audit" aria-labelledby="agent-tab-audit">
+      <h2>{t.agentAudit}</h2>
+      {audit.length === 0 ? <p>No audit entries yet.</p> : <div className="cv-agent-audit">{audit.map((entry: any, index) => <div className="cv-agent-audit-row" key={`${entry.ts}-${index}`}><time>{new Date(entry.ts).toLocaleString()}</time>{' '}<strong>{entry.action}</strong> → {entry.target}{' '}<span aria-label={entry.success === false ? 'Failed' : 'Succeeded'}>{entry.success === false ? '×' : '✓'}</span>{entry.summary ? `: ${entry.summary.slice(0, 120)}` : ''}</div>)}</div>}
+    </section>}
+
+    {result && <section className={`cv-agent-result ${result.status === 'done' ? '' : 'is-error'}`} aria-live="polite">
+      <h3>{resultTitle} <span className="cv-muted">— {result.turns} {t.agentTurns}, {result.elapsed_secs}s {t.agentTime} ({result.via})</span></h3>
+      {result.final && <div className="cv-agent-result-copy">{result.final.slice(0, 3000)}{result.final.length > 3000 ? '…' : ''}</div>}
+      {result.errors?.length > 0 && <div className="cv-agent-result-errors"><strong>Errors</strong><ul>{result.errors.map((message: string, index: number) => <li key={`${index}-${message}`}>{message}</li>)}</ul></div>}
+    </section>}
+  </div>;
 }
