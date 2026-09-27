@@ -474,6 +474,29 @@ def list_backups() -> dict:
 
 
 @_register_tool
+def path_packet(slug: str) -> dict:
+    """Citizen path-workflow packet for a civic map slug: ordered steps with
+    prerequisites, document checklist, fees, apply links, official sources
+    (final redirect URLs, fetch tier) and guide documents — as citizen-ready
+    Markdown the chat can relay."""
+    try:
+        from .main import engine
+        from . import packet as packetmod
+        from .models import TaskMap
+        from sqlmodel import select
+        with Session(engine) as s:
+            m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
+            if not m:
+                return {"error": f"unknown map {slug!r}"}
+            packet = packetmod.build_packet(m)
+        return {"slug": packet["slug"], "title": packet["title"],
+                "counts": packet["counts"],
+                "markdown": packetmod.render_markdown(packet)[:6000]}
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+
+@_register_tool
 def deploy_frontend() -> dict:
     """Build frontend for production."""
     try:
@@ -671,7 +694,10 @@ def run_hermes(task: str, mode: str = "auto", budget: int = MAX_TURNS) -> dict:
 
 def run_hermes_job(engine, job_id: int):
     """Run agent task as background job, store result in DB."""
+    from .jobs import claim
     from .models import Job
+    if not claim(engine, job_id):
+        return  # another dispatcher owns this job
     with Session(engine) as s:
         j = s.get(Job, job_id)
         if not j:

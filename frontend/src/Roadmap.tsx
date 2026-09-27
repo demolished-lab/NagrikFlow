@@ -23,6 +23,19 @@ type MapPayload = {
 
 type Props = { slug: string; onBack: () => void };
 
+type PacketGuide = { url: string; title?: string };
+type Packet = {
+  slug: string;
+  title: string;
+  generated_at: string;
+  steps: { order: number; id: string; title: string; detail?: string; fee?: string; link?: string; prereqs: string[] }[];
+  checklist: string[];
+  fees: string[];
+  guides: PacketGuide[];
+  sources: { url: string; ok?: boolean; final_url?: string; tier?: string; guides?: PacketGuide[] }[];
+  counts: { steps: number; documents: number; sources: number; guides: number };
+};
+
 const STATUS_CONFIG: Record<Status, { color: string; bg: string; badge: string; icon: string }> = {
   ready: { color: '#254f74', bg: '#eef4f8', badge: 'Up next', icon: '○' },
   action: { color: '#936300', bg: '#fff6d7', badge: 'Action needed', icon: '!' },
@@ -65,11 +78,18 @@ export default function Roadmap({ slug, onBack }: Props) {
   const [view, setView] = useState<'map' | 'list'>('list');
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(true);
+  const [packet, setPacket] = useState<Packet | null>(null);
+  const [packetErr, setPacketErr] = useState('');
+  const [packetBusy, setPacketBusy] = useState(false);
+  const [packetNote, setPacketNote] = useState('');
 
   useEffect(() => {
     setFilters({ node_type: '', status: '', q: '' });
     setSelected(null);
     setPayload(null);
+    setPacket(null);
+    setPacketErr('');
+    setPacketNote('');
   }, [slug]);
 
   const loadMap = useCallback(async () => {
@@ -108,6 +128,39 @@ export default function Roadmap({ slug, onBack }: Props) {
       setSelected((previous) => previous?.id === node.id ? node : previous);
     } catch (e: any) {
       setErr(String(e.message || e));
+    }
+  };
+
+  const loadPacket = async () => {
+    setPacketBusy(true);
+    setPacketErr('');
+    setPacketNote('');
+    try {
+      setPacket(await api.taskPacket(slug));
+    } catch (e: any) {
+      setPacketErr(String(e.message || e));
+    } finally {
+      setPacketBusy(false);
+    }
+  };
+
+  const downloadPacket = async () => {
+    setPacketErr('');
+    try {
+      await api.downloadPacketMd(slug);
+    } catch (e: any) {
+      setPacketErr(String(e.message || e));
+    }
+  };
+
+  const sendPacket = async () => {
+    setPacketErr('');
+    setPacketNote('');
+    try {
+      const res = await api.deliverPacket(slug);
+      setPacketNote(`Sent to Telegram chat ${res.chat_id} (via ${res.via}).`);
+    } catch (e: any) {
+      setPacketErr(String(e.message || e));
     }
   };
 
@@ -173,6 +226,27 @@ export default function Roadmap({ slug, onBack }: Props) {
     {err && <div className="cv-api-error" role="alert">{err}</div>}
 
     {view === 'map' ? <section className="cv-interactive-map" aria-label="Interactive civic procedure map"><ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView minZoom={0.35} maxZoom={1.4}><MiniMap nodeColor={(node) => STATUS_CONFIG[(node.data?.status || 'ready') as Status]?.color || '#187b69'} /><Controls /><Background color="#dce8e3" gap={22} /></ReactFlow>{flowNodes.length === 0 && <div className="cv-map-empty">No steps match these filters. <button onClick={resetFilters}>Clear filters</button></div>}</section> : <section className="cv-path-timeline cv-filtered-list" aria-label="Pathway steps">{payload.graph.nodes.map((node, index) => { const status = getStatus(node); const cfg = STATUS_CONFIG[status]; return <article className="cv-filtered-step" key={node.id}><div className="cv-step-header"><span className="cv-step-badge" style={{ background: cfg.bg, color: cfg.color }}>{cfg.icon} {cfg.badge}</span><span className="cv-step-step">Step {index + 1}</span></div><h2 className="cv-step-title">{node.title}</h2><p>{node.detail || 'Step in this civic procedure.'}</p>{node.fee && <small>Fee: {node.fee}</small>}<div className="cv-filtered-step-actions">{node.link && node.link !== node.url && <a href={node.link} target="_blank" rel="noreferrer">Apply / open form ↗</a>}{node.url && <a href={node.url} target="_blank" rel="noreferrer">Official source ↗</a>}{payload.verified && status !== 'verified' && <button className="cv-btn cv-btn-sm cv-btn-ghost" onClick={() => void markDone(node)}>Mark complete</button>}</div></article>; })}{payload.graph.nodes.length === 0 && <div className="cv-map-empty">No steps match these filters. <button onClick={resetFilters}>Clear filters</button></div>}</section>}
+
+    <section className="cv-roadmap-panel" aria-label="Path workflow packet">
+      <div className="cv-sources-title-row">
+        <div><span className="cv-eyebrow">PATH WORKFLOW PACKET</span><h2>Your packet: steps, checklist, guides</h2></div>
+      </div>
+      {!packet && !packetBusy && <p className="cv-muted">One bundle with the ordered steps, your document checklist, official guide links, and every source (with the real redirect target we verified) — downloadable as Markdown or sent to your Telegram.</p>}
+      {!packet && !packetBusy && <button className="cv-btn cv-btn-indigo" onClick={() => void loadPacket()}>Load packet</button>}
+      {packetBusy && <p role="status">Building your packet from the fetched sources…</p>}
+      {packetErr && <div className="cv-api-error" role="alert">{packetErr}</div>}
+      {packet && <div className="cv-packet-body">
+        <p className="cv-muted">{packet.counts.steps} steps · {packet.counts.documents} documents · {packet.counts.sources} sources · {packet.counts.guides} guides · generated {new Date(packet.generated_at).toLocaleString()}</p>
+        {packet.checklist.length > 0 && <div><h3>Document checklist</h3><ul>{packet.checklist.map((doc) => <li key={doc}>{doc}</li>)}</ul></div>}
+        {packet.guides.length > 0 && <div><h3>Official guides</h3><ul>{packet.guides.map((guide) => <li key={guide.url}><a href={guide.url} target="_blank" rel="noreferrer">{guide.title || guide.url} ↗</a></li>)}</ul></div>}
+        <div className="cv-packet-actions">
+          <button className="cv-btn cv-btn-ghost" onClick={() => void downloadPacket()}>Download .md</button>
+          <button className="cv-btn cv-btn-indigo" onClick={() => void sendPacket()}>Send to Telegram</button>
+          <button className="cv-btn cv-btn-ghost" onClick={() => { setPacket(null); setPacketNote(''); }}>Hide packet</button>
+        </div>
+        {packetNote && <p role="status">{packetNote}</p>}
+      </div>}
+    </section>
 
     <section className="cv-sources-section cv-map-sources cv-roadmap-panel"><div className="cv-sources-title-row"><div><span className="cv-eyebrow">SOURCE LINKS</span><h2>Official sources for this pathway</h2></div><span className="cv-source-count">{payload.sources?.length || 0} source{payload.sources?.length === 1 ? '' : 's'}</span></div>
       {!!payload.sources?.length ? <div className="cv-roadmap-source-list">{payload.sources.map((source, index) => { const url = sourceUrl(source); const okay = sourceOk(source); return <a className="cv-roadmap-source" key={`${url}-${index}`} href={url || undefined} target="_blank" rel="noreferrer"><span className={`cv-source-status-dot ${okay ? 'is-ok' : 'is-error'}`}>{okay ? '✓' : '!'}</span><span><strong>{sourceName(source)}</strong><small>{okay ? 'Fetched for this pathway' : 'Source could not be fetched'}</small></span><span aria-hidden="true">↗</span></a>; })}</div> : <p className="cv-muted">No source links were saved with this pathway.</p>}

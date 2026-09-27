@@ -15,9 +15,16 @@ _TELEGRAM_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
 
 
 def check(header_value: str | None) -> None:
-    """Raise ValueError if secret is configured but doesn't match."""
+    """Raise ValueError unless the presented secret matches.
+
+    Fail-closed: an unset secret is tolerated only in dev/test
+    (CIVIC_DEV=1 or ALLOW_DEV_SECRET=1). Production must configure
+    TELEGRAM_WEBHOOK_SECRET or every webhook request is rejected."""
     if not _TELEGRAM_SECRET:
-        return  # Not configured — skip validation
+        if (os.environ.get("CIVIC_DEV") == "1"
+                or os.environ.get("ALLOW_DEV_SECRET") == "1"):
+            return  # dev/sim/test only
+        raise ValueError("telegram webhook secret not configured")
     if header_value != _TELEGRAM_SECRET:
         raise ValueError("invalid telegram webhook secret")
 

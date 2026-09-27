@@ -43,10 +43,43 @@ def _ensure_columns(engine):
             stmts.append("ALTER TABLE taskmap ADD COLUMN created_by INTEGER DEFAULT 0")
     except Exception:
         pass
+    try:
+        jhave = {c["name"] for c in inspect(engine).get_columns("job")}
+        if "worker_id" not in jhave:
+            stmts.append("ALTER TABLE job ADD COLUMN worker_id VARCHAR DEFAULT ''")
+        if "lease_until" not in jhave:
+            stmts.append(f"ALTER TABLE job ADD COLUMN lease_until {dt}")
+    except Exception:
+        pass
     if stmts:
         with engine.begin() as conn:
             for q in stmts:
                 conn.execute(text(q))
+    # Slug uniqueness enforced at the DB layer (idempotent, every boot;
+    # version-index shifts can't skip it). Best-effort: legacy duplicate slugs
+    # leave the index uncreated and run_build's check-then-insert + slug lock
+    # still guards those DBs.
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_taskmap_slug "
+                "ON taskmap (slug)"))
+    except Exception:
+        pass
+    # Dedup constraints: one progress row per (user, map, step), one
+    # notification per (user, reference). Endpoints also catch IntegrityError
+    # so pre-existing duplicate data can't make them 500.
+    for q in (
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_progress_user_map_step "
+        "ON progress (user_id, map_slug, step_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_user_ref "
+        "ON notification (user_id, reference)",
+    ):
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(q))
+        except Exception:
+            pass
 
 
 def m001_base(engine):

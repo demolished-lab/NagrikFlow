@@ -51,7 +51,12 @@ def _mock_pipeline(monkeypatch, infer=None):
     def fake_llm_extract(text, url, task):
         return [dict(s, url=url) for s in SOURCE_STEPS.get(url, [])]
 
-    monkeypatch.setattr(W, "cascade_fetch", lambda url: (f"page content for {url}", "trafilatura"))
+    # build_map uses cascade_fetch_full (text, tier, final_url); keep the
+    # legacy name patched too for tests that call cascade_fetch directly
+    monkeypatch.setattr(W, "cascade_fetch_full",
+                        lambda url: (f"page content for {url}", "trafilatura", url))
+    monkeypatch.setattr(W, "cascade_fetch",
+                        lambda url: (f"page content for {url}", "trafilatura"))
     monkeypatch.setattr(W, "llm_extract", fake_llm_extract)
     if infer is not None:
         monkeypatch.setattr(W, "llm_infer_edges", lambda task, nodes: infer)

@@ -15,7 +15,7 @@ import subprocess
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import trafilatura
 
@@ -47,56 +47,147 @@ def _require_public(url: str) -> None:
         raise RuntimeError("ssrf: non-public target")
 
 
-def fetch_tier1(url: str) -> str:
+def guard_chain(url: str) -> str:
+    """Follow the redirect chain through the guarded opener, validating EVERY
+    hop (public target only), and return the final URL.
+
+    Fetchers that manage their own connections (crawl4ai, obscura, wigolo)
+    cannot hook their redirect handling, so they start from this
+    chain-validated final URL instead of the raw entry URL. The entry guard
+    alone does not stop a 302 to http://169.254.169.254/."""
+    _require_public(url)
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    opener = urllib.request.build_opener(_GuardedRedirect)
+    with opener.open(req, timeout=20) as resp:
+        final = resp.geturl() or url
+        try:
+            resp.read(1)  # drain one byte so the conn can be released
+        except Exception:
+            pass
+    _require_public(final)
+    return final
+
+
+def _fetch_tier1_full(url: str) -> tuple[str, str]:
+    """(text, final_url) — final_url is where the redirect chain landed."""
     _require_public(url)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     opener = urllib.request.build_opener(_GuardedRedirect)
     with opener.open(req, timeout=25) as resp:
         data = resp.read(2_000_000)
         charset = resp.headers.get_content_charset() or "utf-8"
+        final = resp.geturl() or url
     dl = data.decode(charset, errors="replace")
     text = trafilatura.extract(dl, include_links=True) or ""
-    return _ok(text)
+    return _ok(text), final
 
 
-def fetch_tier2(url: str) -> str:
-    _require_public(url)
+def fetch_tier1(url: str) -> str:
+    return _fetch_tier1_full(url)[0]
+
+
+def _fetch_tier2_full(url: str) -> tuple[str, str]:
+    final = guard_chain(url)  # validate the whole redirect chain first
     from crawl4ai import AsyncWebCrawler
     import asyncio
 
     async def _go():
         async with AsyncWebCrawler() as crawler:
-            r = await crawler.arun(url=url, word_count_threshold=20)
+            r = await crawler.arun(url=final, word_count_threshold=20)
             return (r.markdown or "")[:20000]
     text = asyncio.run(_go())
-    return _ok(text)
+    return _ok(text), final
+
+
+def fetch_tier2(url: str) -> str:
+    return _fetch_tier2_full(url)[0]
+
+
+def _fetch_tier3_full(url: str) -> tuple[str, str]:
+    final = guard_chain(url)  # validate the whole redirect chain first
+    import os
+    exe = os.path.expanduser("~/.obscura/obscura.exe")
+    out = subprocess.run([exe, "fetch", final, "--dump", "text"],
+                         capture_output=True, text=True, timeout=120)
+    text = (out.stdout or "")[-20000:]
+    return _ok(text), final
 
 
 def fetch_tier3(url: str) -> str:
-    _require_public(url)
-    import os
-    exe = os.path.expanduser("~/.obscura/obscura.exe")
-    out = subprocess.run([exe, "fetch", url, "--dump", "text"],
-                         capture_output=True, text=True, timeout=120)
-    text = (out.stdout or "")[-20000:]
-    return _ok(text)
+    return _fetch_tier3_full(url)[0]
 
 
-def cascade_fetch(url: str) -> tuple[str, str]:
-    """Return (text, tier_used). Raises if all tiers fail."""
+def _fetch_scrapling_full(url: str) -> tuple[str, str]:
+    """Extra stealth tier: Evonext/D4Vinci Scrapling through the omniharness
+    bridge (installed in the base Python, not this venv). Subprocess + env
+    kill-switch (CIVIC_EXTRA_TIERS=0) so a missing bridge just skips."""
+    final = guard_chain(url)
+    import json as _json
+    import shutil as _shutil
+    bridge = os.path.join(os.environ.get("OMNIHARNESS_DIR",
+                                          r"C:\Users\Raja\omniharness"),
+                          "scrapling_bridge.py")
+    if not os.path.isfile(bridge):
+        raise RuntimeError("scrapling bridge not present")
+    py = os.environ.get("SCRAPLING_PY") or _shutil.which("python") or ""
+    if not py:
+        raise RuntimeError("no python interpreter for scrapling")
+    out = subprocess.run([py, bridge, "--url", final],
+                         capture_output=True, text=True, timeout=60)
+    line = (out.stdout or "").strip().splitlines()
+    if out.returncode != 0 or not line:
+        raise RuntimeError(f"scrapling failed: "
+                           f"{(out.stderr or out.stdout or '')[:120]}")
+    data = _json.loads(line[-1])
+    if not data.get("ok"):
+        raise RuntimeError(f"scrapling status {data.get('status')}")
+    return _ok((data.get("text") or "")[:20000]), final
+
+
+def _fetch_jina_full(url: str) -> tuple[str, str]:
+    """Reader tier: r.jina.ai renders JS/bot-walled pages into clean text."""
+    final = guard_chain(url)
+    req = urllib.request.Request(
+        "https://r.jina.ai/" + final,
+        headers={"User-Agent": UA, "Accept": "text/plain"})
+    opener = urllib.request.build_opener(_GuardedRedirect)
+    with opener.open(req, timeout=25) as resp:
+        data = resp.read(2_000_000)
+        charset = resp.headers.get_content_charset() or "utf-8"
+    return _ok(data.decode(charset, errors="replace")[:20000]), final
+
+
+def cascade_fetch_full(url: str) -> tuple[str, str, str]:
+    """Return (text, tier_used, final_url_after_redirects).
+
+    final_url is where the guarded redirect chain actually landed — the
+    packet artifact links citizens to that, not to a 302-hop entry URL."""
     _require_public(url)
-    for name, fn in (("trafilatura", fetch_tier1), ("crawl4ai", fetch_tier2),
-                     ("obscura", fetch_tier3)):
+    tiers = [("trafilatura", _fetch_tier1_full),
+             ("crawl4ai", _fetch_tier2_full),
+             ("obscura", _fetch_tier3_full)]
+    if os.environ.get("CIVIC_EXTRA_TIERS", "1") != "0":
+        tiers += [("scrapling", _fetch_scrapling_full),
+                  ("jina", _fetch_jina_full)]
+    for name, fn in tiers:
         try:
-            return fn(url), name
+            text, final = fn(url)
+            return text, name, final
         except Exception:
             continue
     try:
         from . import discover as discovermod
-        return discovermod.fetch_text(url), "wigolo"
+        text, final = discovermod.fetch_text(url, return_final=True)
+        return text, "wigolo", final
     except Exception:
         pass
     raise RuntimeError(f"all fetch tiers failed for {url}")
+
+
+def cascade_fetch(url: str) -> tuple[str, str]:
+    """Return (text, tier_used). Raises if all tiers fail."""
+    text, tier, _final = cascade_fetch_full(url)
+    return text, tier
 
 
 FEE_RE = re.compile(r"(?:fee|fees|charge|cost|Rs\.?|₹)\s*[:\-]?\s*([₹Rs\.\s]*\d[\d,]*)", re.I)
@@ -108,6 +199,15 @@ DOC_LINK_HINTS = ("form", "doc", "download", "certificate", "checklist", "templa
 BAD_LINK_HINTS = ("grievance", "complaint", "assist", "feedback", "contact",
                   "helpdesk", "helpline", "faq", "charter", "enquiry",
                   "inquiry", "ticket", "support", "suggestion", "champions")
+# Guide/official-document links (guidelines, handbooks, PDFs, circulars).
+# Narrower blocklist than BAD_LINK_HINTS: a citizen *should* get the citizen
+# charter / FAQ as reading material — just never as an application link.
+GUIDE_HINTS = ("guideline", "guidelines", "handbook", "manual", "brochure",
+               "circular", "instruction", "directory", "checklist", "template",
+               ".pdf", "form", "download", "citizen", "charter", "scheme",
+               "rules", "act", "leaflet", "document")
+GUIDE_BAD = ("grievance", "complaint", "feedback", "enquiry", "inquiry",
+             "suggestion", "helpline", "helpdesk", "ticket", "champions")
 NO_DOCS_RE = re.compile(
     r"(?:\bno\b[^.]{0,40}\b(?:documents?|proof|copies|papers)\b"
     r"|\bpaperless\b"
@@ -115,6 +215,22 @@ NO_DOCS_RE = re.compile(
     r"|\bnothing to (?:upload|submit)\b"
     r"|\bnot require\b[^.]{0,30}\b(?:documents?|proof)\b)",
     re.I)
+
+# Page states the service is free ("Registration is Free of Cost", "No fee").
+FREE_RE = re.compile(
+    r"(?:free\s+of\s+(?:cost|charge)"
+    r"|\bis\s+(?:entirely\s+|completely\s+|totally\s+)?free\b"
+    r"|\b(?:registration|application)\s+is\s+free\b"
+    r"|\bno\s+(?:fee|fees|charge|cost|payment)\b"
+    r"|\b(?:fee|charge|cost)\s*[:\-]?\s*(?:rs\.?|₹)?\s*0(?:\.00)?\b"
+    r"|₹\s*0\b)",
+    re.I)
+
+# A bare document mention (a word in prose) is not a documents-to-gather
+# requirement; require a requirement verb near the mention.
+REQ_DOC_RE = re.compile(
+    r"\b(?:require[ds]?|must|need(?:ed)?|bring|carry|present|produce|upload|"
+    r"attach|submit|enclose)\b", re.I)
 
 
 def _url_host(u: str) -> str:
@@ -266,14 +382,54 @@ def verify_links(nodes: list[dict]) -> None:
             n["link"] = ""
 
 
+def extract_guides(text: str, source_url: str, limit: int = 5) -> list[dict]:
+    """Official reading material linked from a fetched source: guidelines,
+    handbooks, PDFs, circulars, citizen charters, templates.
+
+    Host-gated like pick_link (source host or .gov.in/.nic.in), never a
+    grievance/helpdesk page. Returns [{url, title}] sorted by path hint
+    strength, capped at `limit`."""
+    src_host = _url_host(source_url)
+    scored: list[tuple[int, str, str]] = []
+    seen: set[str] = set()
+    for raw in URL_RE.findall(text or ""):
+        cand = raw.rstrip(".,;:'\")")
+        if cand in seen:
+            continue
+        host = _url_host(cand)
+        if not host or (host != src_host and not _govish(host)):
+            continue
+        low = cand.lower()
+        if any(bad in low for bad in GUIDE_BAD):
+            continue
+        score = sum(2 for hint in GUIDE_HINTS if hint in low)
+        if score == 0:
+            continue
+        if host == src_host:
+            score += 1
+        seen.add(cand)
+        name = unquote(urlparse(cand).path.rsplit("/", 1)[-1]) or host
+        title = re.sub(r"[-_]+", " ", name).strip() or cand
+        scored.append((score, cand, title))
+    scored.sort(key=lambda item: -item[0])
+    return [{"url": u, "title": t} for _s, u, t in scored[:limit]]
+
+
 def heuristic_extract(text: str, url: str) -> list[dict]:
     """Zero-LLM fallback: fees + document mentions + official links -> steps."""
+    text = text or ""
     fees = sorted(set(FEE_RE.findall(text)))[:5]
     docs = sorted(set(m.group(1) for m in DOC_RE.finditer(text)))[:10]
     # "paperless / no documents to upload" pages (e.g. Udyam) must not get a
     # fabricated document-gathering step just because PAN is mentioned in prose
-    if docs and NO_DOCS_RE.search(text or ""):
+    if docs and NO_DOCS_RE.search(text):
         docs = []
+    # even on non-paperless pages, a doc token needs a requirement verb nearby
+    # ("PAN is accepted as proof" != "bring your PAN")
+    docs = [m.group(1) for m in DOC_RE.finditer(text)
+            if m.group(1) in docs
+            and REQ_DOC_RE.search(text[max(0, m.start() - 60):m.end() + 60])]
+    docs = sorted(set(docs))[:10]
     doc_link = pick_link(text, url, DOC_LINK_HINTS)
     app_link = pick_link(text, url, LINK_HINTS)
     steps = []
@@ -281,10 +437,25 @@ def heuristic_extract(text: str, url: str) -> list[dict]:
         steps.append({"id": "docs", "type": "prereq", "title": "Gather documents",
                       "detail": "Mentioned on source: " + ", ".join(docs),
                       "url": url, "link": doc_link, "fee": ""})
+    # fee: quote a figure the page states; a page that says "free" shows ₹0;
+    # a silent page must not invent or promise a fee schedule
+    free = bool(FREE_RE.search(text))
+    fee = fees[0] if fees else ("₹0" if free else "")
+    if fees:
+        detail = "Fees seen: " + ", ".join(fees)
+    elif free:
+        detail = "Free of cost (stated on the official page)."
+    else:
+        detail = "See official page for current fee schedule."
+    if NO_DOCS_RE.search(text):
+        detail += " Paperless — no documents to upload (stated on the official page)."
     steps.append({"id": "apply", "type": "action", "title": "Apply on official portal",
-                  "detail": ("Fees seen: " + ", ".join(fees) if fees else
-                             "See official page for current fee schedule."),
-                  "url": url, "link": app_link, "fee": fees[0] if fees else ""})
+                  "detail": detail,
+                  "url": url,
+                  # no deep link on the page? the fetched official source IS
+                  # the portal entry point — never leave the CTA empty
+                  "link": app_link or clean_link(url, url),
+                  "fee": fee})
     return steps
 
 
@@ -551,13 +722,15 @@ def build_map(task: str, urls: list[str], city: str = "", state: str = "",
     sources = []
     for url in urls:
         try:
-            text, tier = cascade_fetch(url)
+            text, tier, final = cascade_fetch_full(url)
         except Exception as e:
             sources.append({"url": url, "ok": False, "error": str(e)[:120]})
             continue
         steps = llm_extract(text, url, task)
         per_source.append((url, steps))
         sources.append({"url": url, "ok": True, "tier": tier,
+                        "final_url": final,
+                        "guides": extract_guides(text, final or url),
                         "fetched_at": datetime.now(timezone.utc).isoformat()})
 
     nodes, edges, edge_sources = merge_sources(per_source)

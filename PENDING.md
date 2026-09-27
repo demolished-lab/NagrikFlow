@@ -103,6 +103,68 @@ Full re-audit verdict was "not production-ready"; every listed blocker fixed:
   build clean, e2e 8/8 (serial — parallel chromium OOMs this 16 GB box),
   `npm audit` 0 vulnerabilities.
 
+## External audit remediation (2026-09-27, round 4)
+- [x] **Catalog fallback** — `build_task` re-runs `catalogmod.fallback_sources`
+  after URL filtering empties the list (`discovery="catalog"`), 400 only if
+  still empty; `_valid()` helper catches HTTPException + ValueError per URL.
+- [x] **Heuristic quality** — `FREE_RE`/`REQ_DOC_RE` gates: fee falls back to
+  "₹0 (stated on the official page)" only when free-text matches, document
+  requirements only when a requirement verb appears ±60 chars of the token,
+  no-docs pages get "Paperless — no documents to upload", apply CTA falls
+  back to source URL (never empty).
+- [x] **Chain guard** — `guard_chain(url)` validates every redirect hop;
+  used by tier-2/3 fetches and `discover.fetch_text`; scheme/non-public
+  failures re-raise, other failures fall back to `_require_public`.
+- [x] **Job durability** — `Job.worker_id` + `lease_until` columns,
+  atomic `claim()` (UPDATE ... WHERE status='queued'), `poll_once` dispatch +
+  expired-lease revive + >24h fail, `start_poller` daemon (on unless
+  `JOB_POLLER=0`), lease-aware `recover_orphans`, claim-at-top in
+  `run_build`/`run_recheck`/`run_agent_job`/`run_hermes_job`, IntegrityError
+  insert-race fallback via `_apply` closure, idempotent
+  `uq_taskmap_slug` unique index in `_ensure_columns` (avoids migration
+  version skew on SQLite+PG).
+- [x] **Erasure** — `account_delete` purges user's unverified draft maps,
+  anonymizes verified ones (`created_by=0`), purges Progress/milestones on
+  erased slugs.
+- [x] **Telegram hardening** — `telegram_validate.check` fail-closed
+  (401 on unset secret unless `CIVIC_DEV=1`/`ALLOW_DEV_SECRET=1`),
+  `uq_progress_user_map_step` + `uq_notification_user_ref` unique indexes +
+  IntegrityError-tolerant commits, build-task field caps (422) and
+  per-user active-build quota (429, `JOB_MAX_ACTIVE_PER_USER=3`).
+- [x] **CI** — frontend job runs `npm audit --audit-level=moderate`.
+- [x] **GOVERNMENT_READINESS_AUDIT.md** rewritten evidence-based
+  (explicit "NOT ready to register" status, controls + external gaps).
+- Verified: **pytest 112/112** (13 new round-4 tests in
+  `test_audit_fixes.py`).
+
+## Path-workflow packet feature (2026-09-27)
+- [x] **Source meta** — tier fetches return `(text, final_url)`;
+  `cascade_fetch_full` order trafilatura→crawl4ai→obscura→(extra)→
+  scrapling→jina→wigolo (`CIVIC_EXTRA_TIERS=0` opts out); `TaskMap.source_urls`
+  entries now `{url, ok, tier, final_url, guides, fetched_at}` (legacy
+  strings still handled — no DB migration); `extract_guides` scores
+  host-gated guide/report/so PDF+HTML links from fetched text.
+- [x] **Packet** — new `backend/app/packet.py`: `build_packet` (ordered steps
+  with prereqs from edges, document checklist from prereq-step DOC_RE
+  tokens, fees, apply links, aggregated guides, counts) +
+  `render_markdown`; endpoints `GET /task/{slug}/packet`,
+  `GET /task/{slug}/packet.md` (attachment download),
+  `POST /task/{slug}/deliver` (Telegram via linked chat or
+  `CIVIC_TELEGRAM_CHAT_ID`, 400 without chat, 502 on send failure, ~3900-char
+  truncation, alert → `console` when no Telegram).
+- [x] **Hermes integration** — `path_packet(slug)` tool in `hermes_core`
+  (`@_register_tool`, returns packet summary + first 6000 chars of markdown);
+  `worker._fetch_scrapling_full` (omniharness `scrapling_bridge.py`,
+  `SCRAPLING_PY`/python, 60s) and `worker._fetch_jina_full` (`r.jina.ai`,
+  guarded opener, 25s) wired into the cascade.
+- [x] **Frontend** — `api.ts` `taskPacket`/`deliverPacket`/
+  `downloadPacketMd` (auth-header blob download); Roadmap "PATH WORKFLOW
+  PACKET" panel: load-on-demand, checklist + guides render, Download .md,
+  Send to Telegram (chat id + via shown), Hide.
+- Verified: **pytest 119/119** (7 packet tests in `test_packet.py`),
+  life-sim 8/8, personas 20/20, `tsc` + vite build clean, **e2e 9/9**
+  (new packet test, serial), `npm audit` 0 vulnerabilities.
+
 ## Audit Fixes Applied (2026-09-27)
 - [x] Added missing dependencies: `crawl4ai>=0.5`, `python-dotenv>=1.0`
 - [x] Created `.env.example` with all required variables documented

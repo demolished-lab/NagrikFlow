@@ -390,3 +390,299 @@ def test_heuristic_extract_suppresses_docs_on_paperless_pages():
     normal = "Bring your PAN card and Aadhaar letter to the office."
     steps = W.heuristic_extract(normal, "https://example.gov.in/page")
     assert any(s["id"] == "docs" for s in steps)
+
+
+# ================= round-4 remediation (re-audit at 8e57023) ================
+
+def test_build_task_catalog_fallback_when_all_search_urls_filtered(client, user,
+                                                                   monkeypatch):
+    """Search returning ONLY non-government URLs must fall through to the
+    curated catalog instead of 400ing."""
+    from fastapi import HTTPException
+    from app import main as M
+    import app.jobs as J
+
+    monkeypatch.setattr(M.discovermod, "discover",
+                        lambda q, max_results=8: [
+                            {"url": "https://ugly.example/listing"}])
+
+    def gate(url):
+        if "ugly.example" in url:
+            raise HTTPException(400, "not a government source")
+        return url
+
+    monkeypatch.setattr(M, "_validate_fetch_url", gate)
+    monkeypatch.setattr(J, "run_build", lambda engine, jid: None)
+
+    r = client.post("/build-task", headers=user["headers"], json={
+        "task": "udyam registration"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["discovery"] == "catalog"
+    assert body["urls_found"] > 0
+
+
+def test_heuristic_uday_audit_quotes_free_paperless_and_link():
+    """The re-audit's quoted Udyam text must yield ₹0 + paperless detail and
+    the real application link — never a docs step or a help/grievance URL."""
+    from app import worker as W
+    text = ("Udyam (MSME) Registration is Free of Cost and paperless. "
+            "No documents or proof are required for registering an MSME. "
+            "Only Adhaar Number will be enough for registration. "
+            "Apply at https://udyamregistration.gov.in/UdyamRegistration.aspx "
+            "Need help? https://champions.gov.in/grievance or "
+            "https://udyamregistration.gov.in/faq")
+    steps = W.heuristic_extract(text, "https://udyamregistration.gov.in/")
+    assert "docs" not in [s["id"] for s in steps]
+    apply = next(s for s in steps if s["id"] == "apply")
+    assert apply["fee"] == "₹0"
+    assert "Free of cost" in apply["detail"]
+    assert "Paperless" in apply["detail"]
+    assert apply["link"] == \
+        "https://udyamregistration.gov.in/UdyamRegistration.aspx"
+
+
+def test_heuristic_doc_mention_without_requirement_verb_is_dropped():
+    from app import worker as W
+    text = "The portal accepts PAN as identity proof and uses Aadhaar for eKYC."
+    steps = W.heuristic_extract(text, "https://example.gov.in/scheme")
+    assert "docs" not in [s["id"] for s in steps]
+    apply = next(s for s in steps if s["id"] == "apply")
+    assert apply["link"] == "https://example.gov.in/scheme"  # source fallback
+
+
+def test_guarded_redirect_blocks_internal_hop(monkeypatch):
+    from app import worker as W
+    monkeypatch.delenv("SSRF_PROBE", raising=False)
+    monkeypatch.setattr(W, "_probe_target_ok",
+                        lambda u: False if "internal" in u else True)
+    handler = W._GuardedRedirect()
+    req = W.urllib.request.Request("https://ok.example/")
+    with pytest.raises(W._BadRedirect):
+        handler.redirect_request(req, None, 302, "Found", None,
+                                 "https://internal.corp.local/x")
+    # dev/sim opt-out still works for localhost fixture servers
+    monkeypatch.setenv("SSRF_PROBE", "0")
+    out = handler.redirect_request(req, None, 302, "Found", None,
+                                   "https://internal.corp.local/x")
+    assert out is not None and out.full_url == "https://internal.corp.local/x"
+
+
+def test_job_claim_is_exactly_once(client):
+    from app import jobs as J
+    from app import main as M
+    from app.models import Job
+    with Session(M.engine) as s:
+        j = Job(kind="build", payload="{}")
+        s.add(j)
+        s.commit()
+        s.refresh(j)
+        jid = j.id
+    try:
+        assert J.claim(M.engine, jid) is True
+        assert J.claim(M.engine, jid) is False  # second dispatcher loses
+        with Session(M.engine) as s:
+            row = s.get(Job, jid)
+            assert row.status == "running"
+            assert row.lease_until is not None
+            assert row.worker_id
+        with Session(M.engine) as s:  # finished jobs are never claimable
+            row = s.get(Job, jid)
+            row.status = "failed"
+            s.add(row)
+            s.commit()
+        assert J.claim(M.engine, jid) is False
+    finally:
+        with Session(M.engine) as s:
+            row = s.get(Job, jid)
+            if row:
+                s.delete(row)
+                s.commit()
+
+
+def test_poll_once_lease_semantics(client, monkeypatch):
+    from app import jobs as J
+    from app import main as M
+    from app.models import Job
+    dispatched = []
+    monkeypatch.setattr(J, "_dispatch_thread",
+                        lambda engine, jid, kind: dispatched.append((jid, kind)))
+    now = datetime.now(timezone.utc)
+    rows = {}
+    with Session(M.engine) as s:
+        rows["queued"] = Job(kind="agent", payload="{}")
+        rows["live"] = Job(kind="recheck", status="running", payload="{}",
+                           lease_until=now + timedelta(minutes=10))
+        rows["dead"] = Job(kind="hermes", status="running", payload="{}",
+                           lease_until=now - timedelta(minutes=1))
+        rows["expired"] = Job(kind="build", payload="{}",
+                              created_at=now - timedelta(hours=25))
+        for j in rows.values():
+            s.add(j)
+        s.commit()
+        for j in rows.values():
+            s.refresh(j)
+        ids = {k: j.id for k, j in rows.items()}
+    try:
+        J.poll_once(M.engine)
+        assert (ids["queued"], "agent") in dispatched
+        assert (ids["dead"], "hermes") in dispatched       # expired lease revived
+        assert (ids["live"], "recheck") not in dispatched  # live lease untouched
+        assert (ids["expired"], "build") not in dispatched
+        with Session(M.engine) as s:
+            assert s.get(Job, ids["live"]).status == "running"
+            assert s.get(Job, ids["dead"]).status == "queued"
+            assert s.get(Job, ids["expired"]).status == "failed"
+    finally:
+        with Session(M.engine) as s:
+            for jid in ids.values():
+                row = s.get(Job, jid)
+                if row:
+                    s.delete(row)
+            s.commit()
+
+
+def test_recover_orphans_leaves_live_leases_alone(client, monkeypatch):
+    from app import jobs as J
+    from app import main as M
+    from app.models import Job
+    dispatched = []
+    monkeypatch.setattr(J, "_dispatch_thread",
+                        lambda engine, jid, kind: dispatched.append(jid))
+    with Session(M.engine) as s:
+        j = Job(kind="build", status="running", payload="{}",
+                lease_until=datetime.now(timezone.utc) + timedelta(minutes=10))
+        s.add(j)
+        s.commit()
+        s.refresh(j)
+        jid = j.id
+    try:
+        J.recover_orphans(M.engine)
+        with Session(M.engine) as s:
+            assert s.get(Job, jid).status == "running"  # other instance's work
+        assert jid not in dispatched
+    finally:
+        with Session(M.engine) as s:
+            row = s.get(Job, jid)
+            if row:
+                s.delete(row)
+                s.commit()
+
+
+def test_taskmap_slug_unique_index_enforced(client):
+    from sqlalchemy.exc import IntegrityError
+    _seed_map("uq-round4", GOOD_GRAPH)
+    with pytest.raises(IntegrityError):
+        _seed_map("uq-round4", GOOD_GRAPH)
+    from app import main as M
+    from app.models import TaskMap
+    with Session(M.engine) as s:
+        for row in s.exec(select(TaskMap).where(
+                TaskMap.slug == "uq-round4")).all():
+            s.delete(row)
+        s.commit()
+
+
+def test_account_delete_erases_drafts_anonymizes_verified(client, user, admin):
+    from app import main as M
+    from app.models import Progress, TaskMap, User
+    now = datetime.now(timezone.utc)
+    with Session(M.engine) as s:
+        who = s.exec(select(User).where(User.email == user["email"])).first()
+        uid = who.id
+        other = s.exec(select(User).where(
+            User.email == "demo@civic.test")).first()
+        aid = other.id if other else 0
+        s.add(Progress(user_id=aid, map_slug="draft-round4", step_id="a"))
+        s.commit()
+    _seed_map("draft-round4", GOOD_GRAPH, created_by=uid)
+    _seed_map("verified-round4", GOOD_GRAPH, created_by=uid, verified_at=now)
+    try:
+        r = client.delete("/me/account", headers=user["headers"])
+        assert r.status_code == 200, r.text
+        with Session(M.engine) as s:
+            assert s.exec(select(TaskMap).where(
+                TaskMap.slug == "draft-round4")).first() is None
+            kept = s.exec(select(TaskMap).where(
+                TaskMap.slug == "verified-round4")).first()
+            assert kept is not None and kept.created_by == 0
+            assert s.exec(select(Progress).where(
+                Progress.map_slug == "draft-round4")).first() is None
+    finally:
+        with Session(M.engine) as s:
+            for slug in ("draft-round4", "verified-round4"):
+                for row in s.exec(select(TaskMap).where(
+                        TaskMap.slug == slug)).all():
+                    s.delete(row)
+            s.commit()
+
+
+def test_telegram_webhook_fail_closed_without_secret(monkeypatch):
+    from app import telegram_validate as T
+    monkeypatch.delenv("CIVIC_DEV", raising=False)
+    monkeypatch.delenv("ALLOW_DEV_SECRET", raising=False)
+    monkeypatch.setattr(T, "_TELEGRAM_SECRET", "")
+    with pytest.raises(ValueError, match="not configured"):
+        T.check(None)
+    monkeypatch.setenv("CIVIC_DEV", "1")  # dev tolerates an unset secret
+    T.check(None)
+    monkeypatch.setattr(T, "_TELEGRAM_SECRET", "s3cr3t")  # prod: must match
+    T.check("s3cr3t")
+    with pytest.raises(ValueError, match="invalid"):
+        T.check("wrong")
+
+
+def test_build_task_quota_returns_429(client, user, monkeypatch):
+    from app import main as M
+    from app.models import Job, User
+    with Session(M.engine) as s:
+        who = s.exec(select(User).where(User.email == user["email"])).first()
+        uid = who.id
+        for _ in range(3):  # default JOB_MAX_ACTIVE_PER_USER = 3
+            s.add(Job(kind="build", created_by=uid, payload="{}"))
+        s.commit()
+    try:
+        r = client.post("/build-task", headers=user["headers"],
+                        json={"task": "udyam registration"})
+        assert r.status_code == 429, r.text
+    finally:
+        with Session(M.engine) as s:
+            for j in s.exec(select(Job).where(Job.created_by == uid)).all():
+                s.delete(j)
+            s.commit()
+
+
+def test_build_task_field_length_caps(client, user):
+    r = client.post("/build-task", headers=user["headers"],
+                    json={"task": "x" * 600})
+    assert r.status_code == 422
+    r = client.post("/build-task", headers=user["headers"],
+                    json={"task": "udyam", "city": "y" * 120})
+    assert r.status_code == 422
+
+
+def test_progress_and_notification_unique_indexes(client, user):
+    from sqlalchemy.exc import IntegrityError
+    from app import main as M
+    from app.models import Notification, Progress, User
+    with Session(M.engine) as s:
+        who = s.exec(select(User).where(User.email == user["email"])).first()
+        uid = who.id
+        s.add(Progress(user_id=uid, map_slug="idx-round4", step_id="a"))
+        s.commit()
+        with pytest.raises(IntegrityError):
+            s.add(Progress(user_id=uid, map_slug="idx-round4", step_id="a"))
+            s.commit()
+        s.rollback()
+        s.add(Notification(user_id=uid, reference="dup-ref", title="t"))
+        s.commit()
+        with pytest.raises(IntegrityError):
+            s.add(Notification(user_id=uid, reference="dup-ref", title="t2"))
+            s.commit()
+        s.rollback()
+        for row in s.exec(select(Progress).where(Progress.user_id == uid)).all():
+            s.delete(row)
+        for row in s.exec(select(Notification).where(
+                Notification.user_id == uid)).all():
+            s.delete(row)
+        s.commit()

@@ -187,6 +187,43 @@ test('saved pathway progress and documents dashboard remain connected', async ({
   await expect(udyamStep.getByText('Complete')).toBeVisible();
 });
 
+test('pathway packet loads checklist and guides and delivers to Telegram', async ({ page }) => {
+  await mockAuthenticatedApi(page);
+  await page.route('**/api/task/udyam-register/packet', async (route) => {
+    await route.fulfill({
+      json: {
+        slug: 'udyam-register',
+        title: 'Register a small business',
+        generated_at: '2026-09-27T10:00:00Z',
+        steps: [
+          { order: 1, id: 'aadhaar', title: 'Have Aadhaar', detail: 'Aadhaar number for OTP.', prereqs: [] },
+          { order: 2, id: 'udyam', title: 'Udyam Registration', detail: 'Free, paperless registration.', fee: '₹0', link: 'https://udyamregistration.gov.in/register', prereqs: ['aadhaar'] },
+        ],
+        checklist: ['Aadhaar', 'PAN'],
+        fees: ['₹0'],
+        guides: [{ url: 'https://udyamregistration.gov.in/guide.pdf', title: 'guide.pdf' }],
+        sources: [{ url: 'https://udyamregistration.gov.in/', ok: true, final_url: 'https://udyamregistration.gov.in/en/', tier: 'trafilatura' }],
+        apply_links: [{ step: 'udyam', url: 'https://udyamregistration.gov.in/register' }],
+        counts: { steps: 4, documents: 2, sources: 1, guides: 1 },
+      },
+    });
+  });
+  await page.route('**/api/task/udyam-register/deliver', async (route) => {
+    await route.fulfill({ json: { sent: true, via: 'console', chat_id: '7083579202', text_chars: 42 } });
+  });
+
+  await page.goto('/#/roadmap/udyam-register');
+  await expect(page.getByText('REVIEWED CIVIC PATHWAY')).toBeVisible();
+  await expect(page.getByText('PATH WORKFLOW PACKET')).toBeVisible();
+  await page.getByRole('button', { name: 'Load packet' }).click();
+  await expect(page.getByText('Document checklist')).toBeVisible();
+  await expect(page.getByText('Aadhaar', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('link', { name: /guide\.pdf/ })).toBeVisible();
+  await expect(page.getByText(/4 steps · 2 documents · 1 sources · 1 guides/)).toBeVisible();
+  await page.getByRole('button', { name: 'Send to Telegram' }).click();
+  await expect(page.getByText(/Sent to Telegram chat 7083579202 \(via console\)/)).toBeVisible();
+});
+
 test('task build result is reflected from the saved API pathway and review status', async ({ page }) => {
   await mockAuthenticatedApi(page);
   let submitted: any = null;

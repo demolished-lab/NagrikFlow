@@ -45,6 +45,26 @@ export const api = {
     }),
   jobStatus: (jobId: number) => req(`/jobs/${jobId}`),
   taskMap: (slug: string) => req(`/task/${encodeURIComponent(slug)}`),
+  // Path-workflow packet (steps + checklist + sources/guides)
+  taskPacket: (slug: string) => req(`/task/${encodeURIComponent(slug)}/packet`),
+  deliverPacket: (slug: string) =>
+    req(`/task/${encodeURIComponent(slug)}/deliver`, { method: 'POST' }),
+  downloadPacketMd: async (slug: string) => {
+    const r = await fetch(`${API}/task/${encodeURIComponent(slug)}/packet.md`, { headers: headers() });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(body.detail || r.statusText);
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${slug}-packet.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
   // Admin per-step editing (review, validate, update extracted info)
   adminSteps: (slug: string) => req(`/admin/maps/${encodeURIComponent(slug)}/steps`),
   adminUpdateStep: (slug: string, stepId: string, body: object) =>

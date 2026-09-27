@@ -2,21 +2,28 @@
 
 Single-process BackgroundTasks + DB job rows (status polling). Durability:
 - per-slug in-process lock (no concurrent build of the same map)
+- atomic DB lease/claim: exactly one worker executes a job (multi-instance safe)
+- poller thread picks up queued rows and expired leases cross-instance
 - startup recovery re-dispatches queued/running rows lost to a restart
 - stale running rows are failed on status reads (JOB_STALE_SECONDS)
-When we grow to multi-worker, swap add_task for a Celery/Redis .delay().
 """
 import json
 import os
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import text as sqltext
 from sqlmodel import Session, select
 
 from .models import Job, TaskMap
 
 STALE_SECONDS = int(os.environ.get("JOB_STALE_SECONDS", "3600"))
 RECOVER_MAX_AGE_HOURS = int(os.environ.get("JOB_RECOVER_MAX_AGE_HOURS", "24"))
+LEASE_SECONDS = int(os.environ.get("JOB_LEASE_SECONDS", "1800"))
+
+# Identity of this process's job claims (lease owner field, diagnostics).
+_WORKER_ID = f"{os.getpid()}-{os.urandom(4).hex()}"
 
 _active_guard = threading.Lock()
 _active_slugs: dict[str, threading.Lock] = {}
@@ -46,6 +53,24 @@ def _naive_ok(dt: datetime) -> datetime:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
+def claim(engine, job_id: int, lease_seconds: int = LEASE_SECONDS) -> bool:
+    """Atomically claim a queued job for this worker.
+
+    One UPDATE with status='queued' in the WHERE clause: on PostgreSQL that is
+    a row lock (only one concurrent UPDATE can win), on SQLite the write lock
+    serializes it — so exactly one dispatcher transitions queued -> running.
+    Everyone else sees rowcount 0 and backs off."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with engine.begin() as conn:
+        res = conn.execute(
+            sqltext("UPDATE job SET status='running', worker_id=:w, "
+                    "lease_until=:lease, finished_at=NULL "
+                    "WHERE id=:id AND status='queued'"),
+            {"w": _WORKER_ID, "lease": now + timedelta(seconds=lease_seconds),
+             "id": job_id})
+        return bool(res.rowcount)
+
+
 def fail_if_stale(j: Job) -> bool:
     """Mark a running job failed if it is older than STALE_SECONDS.
 
@@ -66,6 +91,8 @@ def recover_orphans(engine) -> list[int]:
     """Re-dispatch queued/running jobs lost to a process restart.
 
     Rows older than RECOVER_MAX_AGE_HOURS are failed instead of re-run.
+    Running rows whose lease is still live belong to another instance and are
+    left alone (multi-instance restart: do not steal active work).
     Returns the ids re-dispatched."""
     now = datetime.now(timezone.utc)
     doomed: list[int] = []
@@ -80,14 +107,66 @@ def recover_orphans(engine) -> list[int]:
                 j.status = "failed"
                 j.result = json.dumps({"error": "lost in restart (expired)"})
                 j.finished_at = now
+            elif (j.status == "running" and j.lease_until is not None
+                  and _naive_ok(j.lease_until) > now):
+                continue  # another live worker holds this lease
             else:
                 revive.append((j.id, j.kind))
                 j.status = "queued"
+                j.lease_until = None
             s.add(j)
         s.commit()
     for jid, kind in revive:
         _dispatch_thread(engine, jid, kind)
     return [jid for jid, _ in revive]
+
+
+def poll_once(engine) -> list[int]:
+    """Cross-instance pickup: dispatch queued rows and revive expired leases.
+
+    Every worker process runs this on an interval; claim() guarantees exactly
+    one of them actually starts a given job. Rows past RECOVER_MAX_AGE_HOURS
+    are failed here too (a build that never ran and never aged out of the
+    queue shouldn't sit forever). Returns the ids dispatched."""
+    now = datetime.now(timezone.utc)
+    dispatch: list[tuple[int, str]] = []
+    with Session(engine) as s:
+        rows = s.exec(select(Job).where(
+            Job.status.in_(["queued", "running"]))).all()
+        for j in rows:
+            if now - _naive_ok(j.created_at) > timedelta(
+                    hours=RECOVER_MAX_AGE_HOURS):
+                j.status = "failed"
+                j.result = json.dumps({"error": "expired (never picked up)"})
+                j.finished_at = now
+                s.add(j)
+                continue
+            if j.status == "running":
+                if j.lease_until is not None and _naive_ok(j.lease_until) > now:
+                    continue  # live lease: a worker is actively on it
+                j.status = "queued"  # dead worker: lease expired / legacy row
+                j.lease_until = None
+                s.add(j)
+            dispatch.append((j.id, j.kind))
+        s.commit()
+    for jid, kind in dispatch:
+        _dispatch_thread(engine, jid, kind)
+    return [jid for jid, _ in dispatch]
+
+
+def start_poller(engine, interval: float = 2.0) -> None:
+    """Daemon thread that runs poll_once on an interval (JOB_POLLER=0 opts out;
+    tests disable it via conftest)."""
+
+    def _loop():
+        while True:
+            time.sleep(interval)
+            try:
+                poll_once(engine)
+            except Exception:
+                pass
+
+    threading.Thread(target=_loop, name="job-poller", daemon=True).start()
 
 
 def _dispatch_thread(engine, job_id: int, kind: str) -> None:
@@ -111,6 +190,8 @@ def _dispatch_thread(engine, job_id: int, kind: str) -> None:
 def run_build(engine, job_id: int):
     from . import worker as workermod
     from . import watch as watchmod
+    if not claim(engine, job_id):
+        return  # another dispatcher (poller / recovery / bg task) owns this job
     with Session(engine) as s:
         j = s.get(Job, job_id)
         if not j:
@@ -140,17 +221,21 @@ def run_build(engine, job_id: int):
                     TaskMap.slug == p["slug"])).first()
                 payload = json.dumps({"nodes": result["nodes"],
                                       "edges": result["edges"]})
+
+                def _apply(row):
+                    row.title, row.graph_json = p["task"], payload
+                    row.source_urls = json.dumps(result["sources"])
+                    row.edge_sources = json.dumps(result.get("edge_sources", {}))
+                    row.city = p.get("city", "") or row.city
+                    row.state = p.get("state", "") or row.state
+                    row.service_type = p.get("service_type", "") or row.service_type
+                    row.verified_at = None
+                    if row.created_by == 0 and creator:
+                        row.created_by = creator
+                    s.add(row)
+
                 if m:
-                    m.title, m.graph_json = p["task"], payload
-                    m.source_urls = json.dumps(result["sources"])
-                    m.edge_sources = json.dumps(result.get("edge_sources", {}))
-                    m.city = p.get("city", "") or m.city
-                    m.state = p.get("state", "") or m.state
-                    m.service_type = p.get("service_type", "") or m.service_type
-                    m.verified_at = None
-                    if m.created_by == 0 and creator:
-                        m.created_by = creator
-                    s.add(m)
+                    _apply(m)
                 else:
                     s.add(TaskMap(slug=p["slug"], title=p["task"],
                                   city=p.get("city", ""),
@@ -161,6 +246,17 @@ def run_build(engine, job_id: int):
                                   edge_sources=json.dumps(
                                       result.get("edge_sources", {})),
                                   created_by=creator))
+                    try:
+                        s.commit()
+                    except Exception:
+                        # unique-slug race with another instance (uq_taskmap_slug):
+                        # fall back to updating the row that won the insert
+                        s.rollback()
+                        m = s.exec(select(TaskMap).where(
+                            TaskMap.slug == p["slug"])).first()
+                        if m is None:
+                            raise
+                        _apply(m)
                 s.commit()
             base = watchmod.recheck(engine, p["slug"])
             _finish(engine, job_id, "done",
@@ -174,6 +270,8 @@ def run_build(engine, job_id: int):
 
 def run_recheck(engine, job_id: int):
     from . import watch as watchmod
+    if not claim(engine, job_id):
+        return  # another dispatcher owns this job
     with Session(engine) as s:
         j = s.get(Job, job_id)
         if not j:

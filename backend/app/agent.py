@@ -251,7 +251,10 @@ if __name__ == "__main__":
 
 def run_agent_job(engine, job_id: int):
     """Run an agent task as a background job, storing result in DB."""
+    from .jobs import claim
     from .models import Job
+    if not claim(engine, job_id):
+        return  # another dispatcher owns this job
     with Session(engine) as s:
         j = s.get(Job, job_id)
         if not j:

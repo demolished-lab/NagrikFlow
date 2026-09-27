@@ -126,6 +126,9 @@ class Job(SQLModel, table=True):
     created_by: int = 0
     created_at: datetime = Field(default_factory=utcnow)
     finished_at: Optional[datetime] = None
+    # multi-instance lease/claim: which worker owns a running job, until when
+    worker_id: str = ""
+    lease_until: Optional[datetime] = None
 
 
 class OAuthState(SQLModel, table=True):

@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Header, Request
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from .https_middleware import HTTPSRedirectMiddleware
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -144,6 +144,14 @@ def _init_db():
         try:
             from . import jobs as jobsmod
             jobsmod.recover_orphans(engine)  # restart recovery for queued/running jobs
+        except Exception:
+            pass
+    if os.environ.get("JOB_POLLER", "1") != "0":
+        # picks up queued rows + expired leases across worker processes;
+        # claim() inside each runner keeps exactly-once execution
+        try:
+            from . import jobs as jobsmod
+            jobsmod.start_poller(engine)
         except Exception:
             pass
 
@@ -553,7 +561,12 @@ def mark_done(body: DoneIn, user: User = Depends(current_user)):
                 Progress.step_id == body.step_id)).first():
             s.add(Progress(user_id=user.id, map_slug=body.map_slug,
                            step_id=body.step_id))
-            s.commit()
+            try:
+                s.commit()
+            except Exception:
+                # uq_progress_user_map_step: concurrent duplicate — the step
+                # is already tracked, which is what this endpoint promises
+                s.rollback()
     return {"ok": True}
 
 
@@ -627,7 +640,12 @@ def get_notifications(user: User = Depends(current_user)):
                     if overdue else f"{milestone['title']} is due in {milestone['days_left']} days.")
             s.add(Notification(user_id=user.id, kind="deadline", reference=reference,
                                title=title, body=body))
-        s.commit()
+        try:
+            s.commit()
+        except Exception:
+            # uq_notification_user_ref: concurrent duplicate of the same
+            # deadline event — dedup is the goal, not an error
+            s.rollback()
         rows = s.exec(select(Notification).where(Notification.user_id == user.id)
                       .order_by(Notification.created_at.desc())).all()
         return {"notifications": [{"id": row.id, "kind": row.kind, "title": row.title,
@@ -1171,10 +1189,10 @@ def admin_backups(admin: User = Depends(require_admin)):
 
 
 class BuildTaskIn(BaseModel):
-    task: str
-    city: str = ""
-    state: str = ""
-    service_type: str = ""
+    task: str = Field(min_length=1, max_length=500)
+    city: str = Field(default="", max_length=100)
+    state: str = Field(default="", max_length=100)
+    service_type: str = Field(default="", max_length=100)
 
 
 class DiscoverIn(BaseModel):
@@ -1187,6 +1205,16 @@ async def build_task(body: "BuildTaskIn", bg: _BT, user: User = Depends(current_
     """Citizen submits civic task -> discovers sources -> builds map async."""
     if not body.task.strip():
         raise HTTPException(400, "task required")
+    # per-user concurrency quota: builds are expensive (multi-tier fetch),
+    # a burst of queued jobs must not starve everyone else
+    max_active = int(os.environ.get("JOB_MAX_ACTIVE_PER_USER", "3"))
+    with Session(engine) as s:
+        active = len(s.exec(select(Job).where(
+            Job.created_by == user.id,
+            Job.status.in_(["queued", "running"]))).all())
+    if active >= max_active:
+        raise HTTPException(429, "too many builds in progress — "
+                                 "wait for one to finish and retry")
     
     # Generate slug from task + city
     slug_base = re.sub(r'\W+', '-', body.task.lower().strip()).strip('-')
@@ -1228,14 +1256,24 @@ async def build_task(body: "BuildTaskIn", bg: _BT, user: User = Depends(current_
 
     # Validate URLs — skip entries the policy gate rejects (it raises
     # HTTPException, not ValueError; catching only ValueError aborted whole runs)
-    valid_urls = []
-    for url in urls:
-        try:
-            valid_urls.append(_validate_fetch_url(url))
-        except HTTPException:
-            continue
-        except ValueError:
-            continue
+    def _valid(candidates: list[str]) -> list[str]:
+        out = []
+        for url in candidates:
+            try:
+                out.append(_validate_fetch_url(url))
+            except (HTTPException, ValueError):
+                continue
+        return out
+
+    valid_urls = _valid(urls)
+    if not valid_urls and discovery != "catalog":
+        # search can return only non-government results; the curated catalog
+        # must also cover the "all search results filtered out" path, not just
+        # "search returned nothing"
+        valid_urls = _valid(catalogmod.fallback_sources(
+            body.task, body.service_type, body.state))
+        if valid_urls:
+            discovery = "catalog"
 
     if not valid_urls:
         raise HTTPException(400, "No valid government URLs found")
@@ -1313,6 +1351,63 @@ def get_task_map(slug: str, user: User = Depends(current_user)):
             "verified": bool(m.verified_at),
             "verified_at": m.verified_at
         }
+
+
+def _scoped_map(slug: str, user: User):
+    """Same visibility rule as GET /task/{slug} (verified: any user;
+    unverified: builder + admin only, else 404)."""
+    with Session(engine) as s:
+        m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
+        if not m:
+            raise HTTPException(404, "unknown map")
+        if not m.verified_at and not user.is_admin and m.created_by != user.id:
+            raise HTTPException(404, "unknown map")
+        return m
+
+
+@app.get("/task/{slug}/packet")
+def get_task_packet(slug: str, user: User = Depends(current_user)):
+    """Citizen path-workflow packet: ordered steps + prerequisites, document
+    checklist, fees, apply links, official sources (final redirect URLs,
+    fetch tier) and guide documents."""
+    from . import packet as packetmod
+    return packetmod.build_packet(_scoped_map(slug, user))
+
+
+@app.get("/task/{slug}/packet.md")
+def get_task_packet_markdown(slug: str, user: User = Depends(current_user)):
+    """Same packet as a downloadable Markdown file."""
+    from . import packet as packetmod
+    m = _scoped_map(slug, user)
+    md = packetmod.render_markdown(packetmod.build_packet(m))
+    return Response(md, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="{m.slug}-packet.md"'})
+
+
+@app.post("/task/{slug}/deliver")
+def deliver_task_packet(slug: str, user: User = Depends(current_user)):
+    """Send the packet to the citizen over Telegram (Hermes hand-off).
+
+    Uses the account's linked chat id; CIVIC_TELEGRAM_CHAT_ID is a
+    single-operator fallback. Unlinked + no fallback -> 400."""
+    from . import alerts as alertsmod
+    from . import packet as packetmod
+    m = _scoped_map(slug, user)
+    chat = (user.telegram_chat or "").strip() or \
+        os.environ.get("CIVIC_TELEGRAM_CHAT_ID", "").strip()
+    if not chat:
+        raise HTTPException(400, "link Telegram from your dashboard first "
+                                 "(no chat id for delivery)")
+    text = packetmod.render_markdown(packetmod.build_packet(m))
+    if len(text) > 3900:
+        text = text[:3900].rsplit("\n", 1)[0] + \
+            "\n\n… packet truncated here — open the app for the full path."
+    try:
+        res = alertsmod.send(chat, text)
+    except Exception as e:
+        raise HTTPException(502, f"telegram delivery failed: {str(e)[:120]}")
+    return {"sent": True, "via": res.get("via", "console"), "chat_id": chat}
 
 
 
@@ -1520,6 +1615,25 @@ def account_delete(user: User = Depends(current_user)):
             s.delete(row)
         for row in s.exec(select(Job).where(Job.created_by == uid)).all():
             s.delete(row)
+        # Maps: drafts the user created are erased; verified maps stay as
+        # public guidance others may rely on, with attribution stripped
+        draft_slugs: list[str] = []
+        for m in s.exec(select(TaskMap).where(TaskMap.created_by == uid)).all():
+            if m.verified_at:
+                m.created_by = 0
+                s.add(m)
+            else:
+                draft_slugs.append(m.slug)
+                s.delete(m)
+        # anyone's rows hanging off an erased draft (map scoping already hides
+        # drafts; this is belt-and-braces for rows from before that gate)
+        if draft_slugs:
+            for row in s.exec(select(Progress).where(
+                    Progress.map_slug.in_(draft_slugs))).all():
+                s.delete(row)
+            for row in s.exec(select(RoadmapMilestone).where(
+                    RoadmapMilestone.map_slug.in_(draft_slugs))).all():
+                s.delete(row)
         u = s.get(User, uid)
         if u:
             s.delete(u)

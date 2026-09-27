@@ -41,12 +41,24 @@ def discover(task: str, max_results: int = 8) -> list[dict]:
     return sorted(items, key=score)[:max_results]
 
 
-def fetch_text(url: str) -> str:
-    """Keyless tiered fetch (auto-escalates to headless on bot walls)."""
-    from .worker import _require_public
-    _require_public(url)  # SSRF guard: this path serves agent-supplied URLs
-    res = _run("fetch", url)
+def fetch_text(url: str, return_final: bool = False):
+    """Keyless tiered fetch (auto-escalates to headless on bot walls).
+
+    return_final=True -> (text, final_url_after_redirects) for the packet
+    artifact; default returns text only (back-compat)."""
+    from .worker import _require_public, guard_chain
+    final = url
+    try:
+        final = guard_chain(url)  # validate every redirect hop (wigolo fetches raw)
+    except RuntimeError:
+        raise  # explicit scheme/non-public block — never proceed past this
+    except Exception:
+        # entry unreachable from here (DNS/network): same indeterminate stance
+        # as _require_public — entry guard only, the fetch resolves it itself
+        _require_public(url)
+    res = _run("fetch", final)
     md = (res.get("markdown", "") or res.get("text", "") or "").strip()
     if len(md) < 40:
         raise RuntimeError(f"wigolo fetch thin: {str(res)[:160]}")
-    return md[:20000]
+    text = md[:20000]
+    return (text, final) if return_final else text
