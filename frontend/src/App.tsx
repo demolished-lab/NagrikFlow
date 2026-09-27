@@ -6,181 +6,174 @@ import Roadmap from './Roadmap';
 import Admin from './Admin';
 import AgentPanel from './Agent';
 import HomeView from './HomeView';
+import PathwaysView from './PathwaysView';
+import HelpView from './HelpView';
 import { STR, lang, setLang, Lang } from './i18n';
 import { api } from './api';
+import type { UserProfile } from './types';
 
-type Tab = 'home' | 'roadmap' | 'civic_twin' | 'agent' | 'admin';
+type Tab = 'home' | 'pathways' | 'documents' | 'help' | 'roadmap' | 'agent' | 'admin';
+type BaseTab = Exclude<Tab, 'roadmap'>;
 type AuthState = 'landing' | 'login' | 'app';
 type Route = { tab: Tab; slug?: string };
+type Navigate = (tab: BaseTab | 'roadmap', slug?: string) => void;
 
-const SIDEBAR_ITEMS: { id: Tab; icon: string; label: Record<Lang, string> }[] = [
-  { id: 'home', icon: '⌂', label: { en: 'Home', hi: 'होम' } },
-  { id: 'roadmap', icon: '⌘', label: { en: 'Path Builder', hi: 'पथ बिल्डर' } },
-  { id: 'civic_twin', icon: '▣', label: { en: 'Civic Twin', hi: 'सिविक ट्विन' } },
-  { id: 'agent', icon: '◈', label: { en: 'Hermes Agent', hi: 'हर्मीज एजेंट' } },
-  { id: 'admin', icon: '⚙', label: { en: 'Admin', hi: 'एडमिन' } },
+const MAIN_NAV: { id: BaseTab; icon: string; label: Record<Lang, string> }[] = [
+  { id: 'home', icon: 'home', label: { en: 'Home', hi: 'होम' } },
+  { id: 'pathways', icon: 'path', label: { en: 'My pathways', hi: 'मेरे रास्ते' } },
+  { id: 'documents', icon: 'document', label: { en: 'Documents', hi: 'दस्तावेज़' } },
+  { id: 'help', icon: 'help', label: { en: 'Help', hi: 'सहायता' } },
 ];
 
+function routeFromHash(): Route {
+  const hash = window.location.hash.slice(1);
+  const match = hash.match(/^\/roadmap\/([^/?#]+)/);
+  if (match) {
+    try { return { tab: 'roadmap', slug: decodeURIComponent(match[1]) }; }
+    catch { return { tab: 'home' }; }
+  }
+  const allowed: BaseTab[] = ['home', 'pathways', 'documents', 'help', 'agent', 'admin'];
+  const tab = hash.replace(/^\//, '') as BaseTab;
+  return allowed.includes(tab) ? { tab } : { tab: 'home' };
+}
+
+function hashForRoute(tab: Tab, slug?: string): string {
+  if (tab === 'roadmap' && slug) return `/roadmap/${encodeURIComponent(slug)}`;
+  return tab === 'home' ? '' : `/${tab}`;
+}
+
 export default function App() {
-  const [token] = useState<string>(localStorage.getItem('civic_token') || '');
+  const [token, setToken] = useState<string>(localStorage.getItem('civic_token') || '');
   const [authState, setAuthState] = useState<AuthState>(token ? 'app' : 'landing');
-  const [route, setRoute] = useState<Route>({ tab: 'home' });
+  const [route, setRoute] = useState<Route>(() => routeFromHash());
   const [lg, setLg] = useState<Lang>(lang());
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [search, setSearch] = useState('');
+  const [profileMenu, setProfileMenu] = useState(false);
   const t = STR[lg];
 
   useEffect(() => {
-    if (authState === 'app') {
-      api.profile().then((profile) => setIsAdmin(profile.role === 'admin')).catch(() => setIsAdmin(false));
-    }
-  }, [authState]);
-
-  // Handle hash-based routing
-  useEffect(() => {
-    const handleHash = () => {
-      const hash = window.location.hash.slice(1);
-      if (hash.startsWith('/roadmap/')) {
-        const slug = hash.replace('/roadmap/', '');
-        setRoute({ tab: 'roadmap', slug });
-      } else {
-        setRoute({ tab: 'home' });
-      }
-    };
-    handleHash();
+    const handleHash = () => setRoute(routeFromHash());
     window.addEventListener('hashchange', handleHash);
     return () => window.removeEventListener('hashchange', handleHash);
   }, []);
 
-  const navigateTo = (tab: Tab, slug?: string) => {
-    setRoute({ tab, slug });
-    if (tab === 'home' || !slug) {
-      window.location.hash = '';
-    } else {
-      window.location.hash = `/roadmap/${slug}`;
-    }
+  useEffect(() => {
+    if (authState !== 'app' || !token) return;
+    api.profile().then((data: UserProfile) => {
+      setProfile(data);
+      setIsAdmin(data.role === 'admin');
+    }).catch(() => {
+      setProfile(null);
+      setIsAdmin(false);
+    });
+  }, [authState, token]);
+
+  const navigateTo: Navigate = (tab, slug) => {
+    if (tab === 'roadmap' && !slug) return;
+    const next = hashForRoute(tab, slug);
+    setRoute(tab === 'roadmap' ? { tab, slug } : { tab });
+    const current = window.location.hash.slice(1);
+    if (current !== next) window.location.hash = next;
+  };
+
+  const onLogin = () => {
+    const savedToken = localStorage.getItem('civic_token') || '';
+    setToken(savedToken);
+    setAuthState('app');
+  };
+
+  const logout = () => {
+    localStorage.removeItem('civic_token');
+    setToken('');
+    setProfile(null);
+    setIsAdmin(false);
+    setProfileMenu(false);
+    navigateTo('home');
+    setAuthState('landing');
+  };
+
+  const submitSearch = (event: React.FormEvent) => {
+    event.preventDefault();
+    const value = search.trim();
+    if (!value) return;
+    sessionStorage.setItem('civic_task_prefill', value);
+    navigateTo('home');
+    window.dispatchEvent(new CustomEvent('civic:search-task', { detail: value }));
+    setSearch('');
   };
 
   if (authState === 'landing') return <LandingPage onLogin={() => setAuthState('login')} />;
-  if (authState === 'login') return <LoginPanel onLogin={() => setAuthState('app')} />;
+  if (authState === 'login') return <LoginPanel onLogin={onLogin} />;
+
+  const profileName = profile?.name || profile?.email?.split('@')[0] || 'Your account';
+  const initials = profileName.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') || 'C';
 
   return <div className="cv-app-layout">
     <aside className="cv-sidebar">
-      <div className="cv-brand">
-        <div className="cv-brand-mark">⌁</div>
-        <div>
-          <div className="cv-brand-name">Civic Path Navigator</div>
-          <div className="cv-brand-sub">Municipal Bureaucracy Path Visualizer</div>
-        </div>
-        <span className="cv-pswb">PSWB 02</span>
-      </div>
+      <button className="cv-brand" onClick={() => navigateTo('home')} aria-label="Civic Path Navigator home">
+        <span className="cv-brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 44 44" role="img"><path d="M7 26c9-1 18-8 23-20 2 12-4 24-17 28-4 1-7-2-6-8Z" fill="#df8e43"/><path d="M7 32c9-1 17-6 24-16 0 12-6 22-19 24-4 0-7-3-5-8Z" fill="#1b7a68"/></svg>
+        </span>
+        <span className="cv-brand-copy"><strong>Civic Path<br />Navigator</strong><small>Government services.<br />Simpler together.</small></span>
+      </button>
       <nav className="cv-nav" aria-label="Main navigation">
-        {SIDEBAR_ITEMS.filter((item) => item.id !== 'admin' || isAdmin).map(item => (
-          <button
-            key={item.id}
-            onClick={() => navigateTo(item.id)}
-            className={`cv-nav-item ${route.tab === item.id ? 'cv-nav-item-active' : ''}`}
-            aria-current={route.tab === item.id ? 'page' : undefined}
-          >
-            <span className="cv-nav-icon">{item.icon}</span>
-            <span>{item.label[lg]}</span>
-          </button>
-        ))}
+        <span className="cv-nav-caption">YOUR SPACE</span>
+        {MAIN_NAV.map((item) => <button
+          key={item.id}
+          onClick={() => navigateTo(item.id)}
+          className={`cv-nav-item ${((route.tab === item.id) || (route.tab === 'roadmap' && item.id === 'pathways')) ? 'cv-nav-item-active' : ''}`}
+          aria-current={((route.tab === item.id) || (route.tab === 'roadmap' && item.id === 'pathways')) ? 'page' : undefined}
+        ><NavIcon name={item.icon} /><span>{item.label[lg]}</span></button>)}
+        {isAdmin && <>
+          <span className="cv-nav-caption cv-nav-caption-secondary">ADMIN TOOLS</span>
+          <button className={`cv-nav-item ${route.tab === 'agent' ? 'cv-nav-item-active' : ''}`} onClick={() => navigateTo('agent')} aria-current={route.tab === 'agent' ? 'page' : undefined}><NavIcon name="spark" /><span>Research agent</span></button>
+          <button className={`cv-nav-item ${route.tab === 'admin' ? 'cv-nav-item-active' : ''}`} onClick={() => navigateTo('admin')} aria-current={route.tab === 'admin' ? 'page' : undefined}><NavIcon name="settings" /><span>Review desk</span></button>
+        </>}
       </nav>
-      <div className="cv-sidebar-footer">
-        <div className="cv-sidebar-callout">
-          <strong>Smarter. Simpler.<br />More Connected.</strong>
-          <p>One place for your civic needs — powered by verified government sources and your DigiLocker.</p>
-        </div>
-        <button className="cv-nav-item cv-logout" onClick={() => { localStorage.removeItem('civic_token'); setAuthState('landing'); }}>
-          ↪ {t.logout}
-        </button>
+      <div className="cv-sidebar-bottom">
+        <div className="cv-sidebar-trust"><span className="cv-trust-mark">✓</span><p><strong>Clear steps, trusted sources.</strong><br />Always confirm details on the official site before applying.</p></div>
+        <div className="cv-sidebar-user"><span className="cv-user-avatar">{initials}</span><span className="cv-user-name"><strong>{profileName}</strong><small>{[profile?.city, profile?.state].filter(Boolean).join(', ') || 'Citizen account'}</small></span><button className="cv-user-menu-btn" onClick={() => setProfileMenu((open) => !open)} aria-label="Account options" aria-expanded={profileMenu}>⋯</button></div>
+        {profileMenu && <div className="cv-user-menu"><button onClick={() => navigateTo('documents')}>Documents & progress</button><button onClick={logout}>Sign out</button></div>}
       </div>
     </aside>
+
     <main className="cv-main">
       <header className="cv-header">
-        <div className="cv-search-bar">
-          <span className="cv-search-icon">⌕</span>
-          <input
-            placeholder="Search for a civic task..."
-            aria-label="Search civic tasks"
-            className="cv-search-input"
-          />
-        </div>
+        <div className="cv-header-promise">Find. Understand. Complete.</div>
+        <form className="cv-search-bar" onSubmit={submitSearch} role="search">
+          <span className="cv-search-icon" aria-hidden="true">⌕</span>
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search services..." aria-label="Search civic services" className="cv-search-input" />
+          <button type="submit" className="cv-search-submit" aria-label="Search">↵</button>
+        </form>
         <div className="cv-header-actions">
-          <button className="cv-language" onClick={() => { const next = lg === 'en' ? 'hi' : 'en'; setLang(next); setLg(next); }}>
-            {lg === 'en' ? 'English / मरaठी' : 'हिन्दी / English'}
-          </button>
-          <button className="cv-help">? &nbsp;Help</button>
-          <button className="cv-profile"><span>●</span> Civic Twin <b>⌄</b></button>
+          <button className="cv-language" onClick={() => { const next = lg === 'en' ? 'hi' : 'en'; setLang(next); setLg(next); }} aria-label="Change language">{lg === 'en' ? 'English' : 'हिन्दी'} <span>⌄</span></button>
+          <button className="cv-help" onClick={() => navigateTo('help')}><NavIcon name="help" /> <span>Help</span></button>
+          <button className="cv-header-profile" onClick={() => navigateTo('documents')} aria-label={`Open documents and progress for ${profileName}`}><span className="cv-user-avatar">{initials}</span><span className="cv-header-name">{profileName}</span><b>⌄</b></button>
         </div>
       </header>
-      <div className="cv-content">
-        {route.tab === 'home' && <HomeView />}
-        {route.tab === 'roadmap' && <Roadmap slug={route.slug || 'udyam-register'} />}
-        {route.tab === 'civic_twin' && <Dashboard />}
-        {route.tab === 'agent' && <AgentPanel />}
-        {route.tab === 'admin' && <Admin />}
+      <div className="cv-content" id="main-content">
+        {route.tab === 'home' && <HomeView profile={profile} onNavigate={navigateTo} />}
+        {route.tab === 'pathways' && <PathwaysView onOpenPath={(slug) => navigateTo('roadmap', slug)} />}
+        {route.tab === 'roadmap' && <Roadmap slug={route.slug || ''} onBack={() => navigateTo('pathways')} />}
+        {route.tab === 'documents' && <Dashboard />}
+        {route.tab === 'help' && <HelpView onBuildPath={() => navigateTo('home')} />}
+        {route.tab === 'agent' && isAdmin && <AgentPanel />}
+        {route.tab === 'admin' && isAdmin && <Admin />}
       </div>
     </main>
-    <aside className="cv-context-panel"><CivicTwinPanel token={token} isAdmin={isAdmin} /></aside>
   </div>;
 }
 
-function CivicTwinPanel({ token, isAdmin }: { token: string; isAdmin: boolean }) {
-  const [docs, setDocs] = useState<any[]>([]);
-  const [unlocks, setUnlocks] = useState<any[]>([]);
-  const [nextWin, setNextWin] = useState<string>('');
-  
-  useEffect(() => {
-    if (!token) return;
-    api.brief().then(data => {
-      if (data?.documents) setDocs(data.documents);
-      if (data?.unlocks) setUnlocks(data.unlocks);
-      if (data?.next_win) setNextWin(data.next_win);
-    }).catch(() => {});
-  }, [token]);
-  
-  const docList = docs.length > 0 ? docs : [
-    { name: 'Identity', status: 'available' },
-    { name: 'Address proof', status: 'available' }
-  ];
-  const unlockList = unlocks.length > 0 ? unlocks : [];
-  
-  return <div className="cv-twin-panel">
-    <div className="cv-twin-heading">
-      <span className="cv-twin-avatar">♙</span>
-      <div><h2>Your civic twin</h2><p>Your documents, connections and next best step.</p></div>
-    </div>
-    <div className="cv-twin-section">
-      <h3>Your documents</h3>
-      {docList.map((doc: any, i: number) => (
-        <div key={i} className="cv-twin-doc">
-          <span className={`cv-doc-round ${doc.status}`}>{doc.icon || '▤'}</span>
-          <strong>{doc.name}</strong>
-          <span className={`cv-doc-badge ${doc.status}`}>{doc.status === 'verified' ? 'VERIFIED' : doc.status === 'available' ? 'AVAILABLE' : 'PENDING'}</span>
-          <b>›</b>
-        </div>
-      ))}
-    </div>
-    {unlockList.length > 0 && <div className="cv-twin-section">
-      <h3>What this unlocks</h3>
-      {unlockList.map((item: any, i: number) => (
-        <div key={i} className="cv-unlock-card">
-          <span>▤</span>
-          <strong>{item.title || item.name}</strong>
-          <b>›</b>
-        </div>
-      ))}
-    </div>}
-    {nextWin && <div className="cv-twin-section">
-      <div className="cv-next-win">
-        <div className="cv-star">★</div>
-        <div>
-          <strong>Easiest next win</strong>
-          <p>{nextWin}</p>
-        </div>
-        <b>›</b>
-      </div>
-    </div>}
-  </div>;
+function NavIcon({ name }: { name: string }) {
+  const common = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true as const };
+  switch (name) {
+    case 'home': return <svg {...common}><path d="m3 10 9-7 9 7"/><path d="M5 9v11h14V9M9 20v-7h6v7"/></svg>;
+    case 'path': return <svg {...common}><circle cx="6" cy="6" r="2.3"/><circle cx="18" cy="18" r="2.3"/><circle cx="18" cy="6" r="2.3"/><path d="M8.3 6H13a5 5 0 0 1 5 5v4.7"/></svg>;
+    case 'document': return <svg {...common}><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 12h6M9 16h6"/></svg>;
+    case 'help': return <svg {...common}><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 1 1 4.3 1.8c-1 .9-1.9 1.2-1.9 2.7M12 17.2h.01"/></svg>;
+    case 'spark': return <svg {...common}><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z"/><path d="m19 16 .9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9L19 16Z"/></svg>;
+    default: return <svg {...common}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.8 1.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2h-2.6v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-1.8-1.8.1-.1A1.7 1.7 0 0 0 8 15a1.7 1.7 0 0 0-1.5-1H6.3v-2.6h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 1.8-1.8.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5v-.2H15v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 1.8 1.8-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.2V14h-.2a1.7 1.7 0 0 0-1.5 1Z"/></svg>;
+  }
 }

@@ -1,4 +1,6 @@
 """Personalization + admin desk. Converted from sim/persona scripts."""
+import json
+
 from app import eligibility as elig
 
 
@@ -48,3 +50,47 @@ def test_telegram_link_isolation(client):
     no = client.post("/hooks/telegram", json={
         "message": {"chat": {"id": 111}, "text": f"/start {cb}"}}).json()
     assert no.get("linked") is not True
+
+
+def test_my_pathways_uses_saved_data_and_is_user_scoped(client, user):
+    from sqlmodel import Session
+    from app import main as M
+    from app.models import Job, Progress, TaskMap
+
+    profile = client.get("/me/profile", headers=user["headers"]).json()
+    slug = f"my-path-{profile['id']}"
+    graph = {"nodes": [
+        {"id": "prepare", "title": "Prepare documents", "detail": "Bring PAN", "url": "https://example.gov.in", "type": "prereq"},
+        {"id": "apply", "title": "Apply online", "detail": "Use the official portal", "url": "https://example.gov.in/apply", "type": "action"},
+    ], "edges": [["prepare", "apply"]]}
+    with Session(M.engine) as session:
+        session.add(TaskMap(
+            slug=slug, title="Apply for a permit", city="Pune", state="Maharashtra",
+            graph_json=json.dumps(graph),
+            source_urls=json.dumps([{"url": "https://example.gov.in", "ok": True}]),
+        ))
+        session.add(Job(
+            kind="build", status="done", created_by=profile["id"],
+            payload=json.dumps({"task": "Apply for a permit", "slug": slug,
+                                "city": "Pune", "state": "Maharashtra"}),
+            result=json.dumps({"slug": slug}),
+        ))
+        session.add(Progress(user_id=profile["id"], map_slug=slug, step_id="apply"))
+        session.add(Job(
+            kind="build", status="done", created_by=profile["id"] + 10000,
+            payload=json.dumps({"task": "Another user's task", "slug": "private-other-path"}),
+            result=json.dumps({"slug": "private-other-path"}),
+        ))
+        session.commit()
+
+    response = client.get("/me/pathways", headers=user["headers"])
+    assert response.status_code == 200
+    pathways = response.json()
+    assert [item["slug"] for item in pathways] == [slug]
+    assert pathways[0]["status"] == "review_required"
+    assert pathways[0]["city"] == "Pune"
+    assert pathways[0]["state"] == "Maharashtra"
+    assert pathways[0]["steps"] == 2
+    assert pathways[0]["completed"] == 1
+    assert pathways[0]["completed_steps"] == ["apply"]
+    assert pathways[0]["steps_preview"][0]["title"] == "Prepare documents"
