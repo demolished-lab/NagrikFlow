@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactFlow, { Background, Controls, Handle, MarkerType, MiniMap, Position, type Edge, type Node } from 'reactflow';
 import 'reactflow/dist/style.css';
+import * as dagre from 'dagre';
 import { api } from './api';
 import type { CivicSource } from './types';
 
@@ -15,6 +16,7 @@ type MapPayload = {
   title?: string;
   city?: string;
   state?: string;
+  service_type?: string;
   verified?: boolean;
   edge_sources?: Record<string, string>;
 };
@@ -111,12 +113,34 @@ export default function Roadmap({ slug, onBack }: Props) {
 
   const flowNodes = useMemo<Node[]>(() => {
     if (!payload) return [];
-    return payload.graph.nodes.map((node, index) => ({
+    const graph = payload.graph;
+    const base: Node[] = graph.nodes.map((node, index) => ({
       id: node.id,
       type: 'civic',
-      position: { x: (index % 3) * 270, y: Math.floor(index / 3) * 170 },
+      position: { x: 0, y: 0 },
       data: { title: node.title, status: getStatus(node), index, onSelect: () => setSelected(node) },
     }));
+    // dagre layered layout (left→right follows step order); grid fallback
+    try {
+      const flow = new dagre.graphlib.Graph();
+      flow.setDefaultEdgeLabel(() => ({}));
+      flow.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 90, marginx: 20, marginy: 20 });
+      const ids = new Set(graph.nodes.map((node) => node.id));
+      base.forEach((node) => flow.setNode(node.id, { width: 250, height: 120 }));
+      (graph.edges || []).forEach(([source, target]) => {
+        if (source !== target && ids.has(source) && ids.has(target)) flow.setEdge(source, target);
+      });
+      dagre.layout(flow);
+      return base.map((node) => {
+        const pos = flow.node(node.id);
+        return pos ? { ...node, position: { x: pos.x - 125, y: pos.y - 60 } } : node;
+      });
+    } catch {
+      return base.map((node, index) => ({
+        ...node,
+        position: { x: (index % 3) * 270, y: Math.floor(index / 3) * 170 },
+      }));
+    }
   }, [payload, getStatus]);
 
   const flowEdges = useMemo<Edge[]>(() => (payload?.graph.edges || []).map(([source, target]) => ({
@@ -131,12 +155,13 @@ export default function Roadmap({ slug, onBack }: Props) {
   if (!payload) return <div className="cv-page-state"><div className="cv-api-error" role="alert">{err || 'This pathway could not be loaded.'}</div><button className="cv-btn cv-btn-ghost" onClick={onBack}>← Back to My pathways</button><button className="cv-btn cv-btn-indigo" onClick={() => void loadMap()}>Try again</button></div>;
 
   const location = [payload.city, payload.state].filter(Boolean).join(', ');
+  const context = [payload.service_type, location].filter(Boolean).join(' · ');
 
   return <div className="cv-path-view cv-roadmap-view cv-anim-up">
     <section className="cv-roadmap-toolbar cv-roadmap-panel">
       <button className="cv-back-link" onClick={onBack}>← My pathways</button>
       <div className="cv-roadmap-toolbar-head">
-        <div><span className="cv-eyebrow">{payload.verified ? 'REVIEWED CIVIC PATHWAY' : 'DRAFT PATHWAY'}</span><h1>{payload.title || 'Your procedure path'}</h1><p>{location ? `${location} · ` : ''}{payload.filters?.total ?? payload.graph.nodes.length} steps</p></div>
+        <div><span className="cv-eyebrow">{payload.verified ? 'REVIEWED CIVIC PATHWAY' : 'DRAFT PATHWAY'}</span><h1>{payload.title || 'Your procedure path'}</h1><p>{context ? `${context} · ` : ''}{payload.filters?.total ?? payload.graph.nodes.length} steps</p></div>
         <div className="cv-view-toggle" role="group" aria-label="Pathway display mode"><button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>☷ List</button><button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}>⌘ Map</button></div>
       </div>
       {!payload.verified && <div className="cv-review-banner" role="note"><span aria-hidden="true">i</span><p><strong>This pathway is awaiting source review.</strong> You can inspect its steps and official links; progress tracking will be available after an administrator approves it.</p></div>}

@@ -38,14 +38,25 @@ export const api = {
   telegramLinkCode: () => req('/me/telegram/link-code', { method: 'POST' }),
   dlConnect: () => req('/auth/digilocker/connect'),
   // Build task (dynamic civic path generation)
-  buildTask: (task: string, city?: string, state?: string) =>
-    req('/build-task', { method: 'POST', body: JSON.stringify({ task, city, state }) }),
+  buildTask: (task: string, city?: string, state?: string, serviceType?: string) =>
+    req('/build-task', {
+      method: 'POST',
+      body: JSON.stringify({ task, city, state, service_type: serviceType || '' }),
+    }),
   jobStatus: (jobId: number) => req(`/jobs/${jobId}`),
   taskMap: (slug: string) => req(`/task/${encodeURIComponent(slug)}`),
+  // Admin per-step editing (review, validate, update extracted info)
+  adminSteps: (slug: string) => req(`/admin/maps/${encodeURIComponent(slug)}/steps`),
+  adminUpdateStep: (slug: string, stepId: string, body: object) =>
+    req(`/admin/maps/${encodeURIComponent(slug)}/steps/${encodeURIComponent(stepId)}`,
+      { method: 'PUT', body: JSON.stringify(body) }),
+  adminAddStep: (slug: string, body: object) =>
+    req(`/admin/maps/${encodeURIComponent(slug)}/steps`, { method: 'POST', body: JSON.stringify(body) }),
+  adminDeleteStep: (slug: string, stepId: string) =>
+    req(`/admin/maps/${encodeURIComponent(slug)}/steps/${encodeURIComponent(stepId)}`, { method: 'DELETE' }),
   // Agent API
   agentRun: (task: string, mode: string, budget: number) =>
-    req('/agent/run', { method: 'POST', body: JSON.stringify({ task, mode, budget }) }),
-  agentResult: (jobId: number) => req(`/agent/result/${jobId}`),
+    req('/agent/run', { method: 'POST', body: JSON.stringify({ task, mode, budget }) }),  agentResult: (jobId: number) => req(`/agent/result/${jobId}`),
   agentTools: () => req('/agent/tools'),
   agentAudit: (n: number) => req(`/agent/audit?n=${n}`),
   // Hermes API

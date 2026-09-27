@@ -109,12 +109,239 @@ def llm_extract(text: str, url: str, task: str) -> list[dict]:
         return heuristic_extract(text, url)
 
 
-def build_map(task: str, urls: list[str], city: str = "", state: str = "") -> dict:
-    """Fetch each URL via cascade, extract steps, merge into node-link graph."""
-    nodes, edges, sources = [], [], []
+# ---------------- Graph assembly: merge + cross-source dependency inference ----
+
+STOPWORDS = frozenset(
+    "the and for with from that this your you are was has have been will can may "
+    "not but any all who whom our their what when where which how why get got apply "
+    "application step steps must should need needs required require requires online "
+    "portal site page form forms office visit procedure process following follow "
+    "please ensure ensure's onto into over under before after during within via".split())
+
+PREREQ_HINTS = frozenset(
+    "document documents proof verify verification obtain gather eligibility "
+    "certificate registration register identity address proof".split())
+
+
+def _norm_title(title: str) -> str:
+    return re.sub(r"\W+", " ", (title or "").lower()).strip()
+
+
+def _tokens(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(w) > 2 and w not in STOPWORDS}
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _edge_key(a: str, b: str) -> str:
+    return f"{a}|{b}"  # JSON-safe (tuple keys are not serializable)
+
+
+def _would_cycle(edges: list, a: str, b: str) -> bool:
+    """True if adding a->b closes a cycle (path b ~> a already exists)."""
+    adj: dict[str, list[str]] = {}
+    for s, t in edges:
+        adj.setdefault(s, []).append(t)
+    seen, stack = {b}, [b]
+    while stack:
+        cur = stack.pop()
+        if cur == a:
+            return True
+        for nxt in adj.get(cur, ()):
+            if nxt not in seen:
+                seen.add(nxt)
+                stack.append(nxt)
+    return False
+
+
+def _add_edges(edges: list, edge_sources: dict, new_edges, provenance: str,
+               node_ids: set, cap: int) -> int:
+    """Append validated, acyclic edges. Returns count accepted."""
+    added = 0
+    for pair in new_edges:
+        if len(edges) >= cap:
+            break
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            continue
+        a, b = str(pair[0]), str(pair[1])
+        if a == b or a not in node_ids or b not in node_ids:
+            continue
+        if [a, b] in edges:
+            continue
+        if _would_cycle(edges, a, b):
+            continue
+        edges.append([a, b])
+        edge_sources[_edge_key(a, b)] = provenance
+        added += 1
+    return added
+
+
+def merge_sources(per_source: list[tuple[str, list[dict]]]) -> tuple[list[dict], list, dict]:
+    """Merge duplicate steps across sources (title-token overlap) and chain each
+    source's internal order into sequential edges. Returns (nodes, edges,
+    edge_sources); edge provenance keys are JSON-safe strings ("a|b")."""
+    nodes: list[dict] = []
+    edge_sources: dict = {}
+    resolved_all: list[tuple[str, list[str]]] = []  # (url, resolved node ids)
+    for url, steps in per_source:
+        resolved: list[str] = []
+        for s in steps:
+            title = str(s.get("title") or s.get("id") or "step")
+            ttoks = _tokens(title)
+            sid = re.sub(r"\W+", "-", s.get("id", title)).strip("-").lower()[:40] or "step"
+            match_id = None
+            for existing in nodes:
+                if _jaccard(_tokens(existing["title"]), ttoks) >= 0.6 or \
+                        _norm_title(existing["title"]) == _norm_title(title):
+                    match_id = existing["id"]
+                    break
+            if match_id is None:
+                base, n = sid, 2
+                while any(node["id"] == base for node in nodes):
+                    base, n = f"{sid}-{n}", n + 1
+                match_id = base
+                nodes.append({"id": match_id, "type": s.get("type", "action"),
+                              "title": title, "detail": s.get("detail", ""),
+                              "url": url, "fee": s.get("fee", "")})
+            else:
+                node = next(nd for nd in nodes if nd["id"] == match_id)
+                if not node.get("detail") and s.get("detail"):
+                    node["detail"] = s["detail"]
+                if not node.get("fee") and s.get("fee"):
+                    node["fee"] = s["fee"]
+            resolved.append(match_id)
+        resolved_all.append((url, resolved))
+    edges: list = []
+    for url, ids in resolved_all:
+        for a, b in zip(ids, ids[1:]):
+            if a != b and [a, b] not in edges:
+                edges.append([a, b])
+                edge_sources[_edge_key(a, b)] = url
+    return nodes, edges, edge_sources
+
+
+def cross_source_edges(nodes: list[dict], edges: list, edge_sources: dict) -> None:
+    """Prerequisite nodes -> dependent nodes in OTHER sources via title/detail
+    token overlap (e.g. 'Gather PAN card' -> 'Register for GST')."""
+    node_ids = {n["id"] for n in nodes}
+    cap = max(40, 3 * len(nodes))
+    candidates = []
+    for consumer in nodes:
+        ctoks = _tokens(f"{consumer['title']} {consumer.get('detail', '')}")
+        if len(ctoks) < 2:
+            continue
+        c_index = nodes.index(consumer)
+        for src in nodes:
+            if src["id"] == consumer["id"]:
+                continue
+            if src["url"] == consumer["url"]:
+                continue  # same-source order already captured
+            src_toks = _tokens(src["title"])
+            if not src_toks:
+                continue
+            is_prereq = src["type"] == "prereq" or bool(src_toks & PREREQ_HINTS)
+            if not is_prereq:
+                continue
+            shared = src_toks & ctoks
+            if not shared:
+                continue
+            if len(shared) >= 2 or max(len(t) for t in shared) >= 5:
+                # direction: prerequisite earlier in assembly order
+                if nodes.index(src) < c_index or src["type"] == "prereq":
+                    candidates.append((src["id"], consumer["id"], src["url"]))
+    # dedupe keeping first provenance
     seen = set()
-    # Track source provenance per edge
-    edge_sources: dict[tuple, str] = {}
+    fresh = []
+    for a, b, prov in candidates:
+        if (a, b) not in seen:
+            seen.add((a, b))
+            fresh.append(((a, b), prov))
+    remaining = cap - len(edges)
+    for (a, b), prov in fresh[:max(0, remaining)]:
+        _add_edges(edges, edge_sources, [(a, b)], f"inferred: prerequisite match ({prov})",
+                   node_ids, cap)
+
+
+def bridge_disconnected(edges: list, edge_sources: dict, nodes: list[dict],
+                        per_source: list[tuple[str, list[dict]]]) -> None:
+    """Connect source components that share no dependency path, so a multi-source
+    procedure renders as one DAG. Provenance recorded as source-order inference."""
+    node_ids = {n["id"] for n in nodes}
+    cap = max(40, 3 * len(nodes))
+    groups = []
+    for url, _steps in per_source:
+        ids = [n["id"] for n in nodes if n["url"] == url]
+        if ids:
+            groups.append(ids)
+    if len(groups) < 2:
+        return
+
+    def reaches_any(sources: list[str], targets: set[str]) -> bool:
+        adj: dict[str, list[str]] = {}
+        for s, t in edges:
+            adj.setdefault(s, []).append(t)
+        seen, stack = set(sources), list(sources)
+        while stack:
+            cur = stack.pop()
+            if cur in targets:
+                return True
+            for nxt in adj.get(cur, ()):
+                if nxt not in seen:
+                    seen.add(nxt)
+                    stack.append(nxt)
+        return False
+
+    connected = set(groups[0])
+    for group in groups[1:]:
+        gset = set(group)
+        if not (reaches_any(group, connected) or reaches_any(list(connected), gset)):
+            # no path either direction -> bridge terminal of connected -> entry of group
+            out_nodes = {s for s, _ in edges}
+            in_nodes = {t for _, t in edges}
+            tail = next((n for n in reversed(list(connected)) if n not in out_nodes),
+                        None)
+            head = next((n for n in group if n not in in_nodes), group[0])
+            if tail and head:
+                _add_edges(edges, edge_sources, [(tail, head)],
+                           "inferred: source-order bridge (no shared prerequisite)",
+                           node_ids, cap)
+        connected |= gset
+
+
+def llm_infer_edges(task: str, nodes: list[dict]) -> list[list[str]]:
+    """Ask the LLM for real prerequisite edges across ALL sources. Never raises;
+    validation (ids, dedupe, acyclicity) happens in _add_edges."""
+    if len(nodes) < 3:
+        return []
+    listing = "\n".join(f'- {n["id"]}: {n["title"]} ({n["type"]})' for n in nodes[:40])
+    prompt = (f"Civic task: {task}\nSteps from multiple government sources:\n{listing}\n\n"
+              "Return a JSON array of [before_id, after_id] pairs where 'before' must be "
+              "completed before 'after'. Only genuine prerequisite dependencies between "
+              "these exact ids. Max 10 pairs. No prose.")
+    import json
+    try:
+        raw, _ = llmmod._chat_raw(prompt)
+    except Exception:
+        return []
+    try:
+        m = re.search(r"\[.*\]", raw, re.S)
+        pairs = json.loads(m.group(0)) if m else []
+        return pairs if isinstance(pairs, list) else []
+    except Exception:
+        return []
+
+
+def build_map(task: str, urls: list[str], city: str = "", state: str = "",
+              service_type: str = "") -> dict:
+    """Fetch each URL via cascade, extract steps, merge into a cross-source
+    dependency graph (dedupe + prereq inference + LLM refinement + bridging)."""
+    per_source: list[tuple[str, list[dict]]] = []
+    sources = []
     for url in urls:
         try:
             text, tier = cascade_fetch(url)
@@ -122,21 +349,18 @@ def build_map(task: str, urls: list[str], city: str = "", state: str = "") -> di
             sources.append({"url": url, "ok": False, "error": str(e)[:120]})
             continue
         steps = llm_extract(text, url, task)
-        prev = None
-        for s in steps:
-            sid = re.sub(r"\W+", "-", s.get("id", s.get("title", "‍"))).strip("-").lower()[:40]
-            if sid not in seen:
-                seen.add(sid)
-                nodes.append({"id": sid, "type": s.get("type", "action"),
-                              "title": s.get("title", sid), "detail": s.get("detail", ""),
-                              "url": url, "fee": s.get("fee", "")})
-            if prev and prev != sid:
-                e = [prev, sid]
-                if e not in edges:
-                    edges.append(e)
-                # Record which source URL established this dependency
-                edge_sources[(prev, sid)] = url
-            prev = sid
+        per_source.append((url, steps))
         sources.append({"url": url, "ok": True, "tier": tier,
                         "fetched_at": datetime.now(timezone.utc).isoformat()})
-    return {"nodes": nodes, "edges": edges, "edge_sources": edge_sources, "sources": sources, "city": city, "state": state}
+
+    nodes, edges, edge_sources = merge_sources(per_source)
+    node_ids = {n["id"] for n in nodes}
+    cap = max(40, 3 * len(nodes))
+    cross_source_edges(nodes, edges, edge_sources)
+    bridge_disconnected(edges, edge_sources, nodes, per_source)
+    _add_edges(edges, edge_sources, llm_infer_edges(task, nodes),
+               "inferred: LLM prerequisite model", node_ids, cap)
+
+    return {"nodes": nodes, "edges": edges, "edge_sources": edge_sources,
+            "sources": sources, "city": city, "state": state,
+            "service_type": service_type}

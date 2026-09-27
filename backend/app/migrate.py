@@ -36,6 +36,8 @@ def _ensure_columns(engine):
             stmts.append("ALTER TABLE taskmap ADD COLUMN state VARCHAR DEFAULT ''")
         if "edge_sources" not in thave:
             stmts.append("ALTER TABLE taskmap ADD COLUMN edge_sources TEXT DEFAULT ''")
+        if "service_type" not in thave:
+            stmts.append("ALTER TABLE taskmap ADD COLUMN service_type VARCHAR DEFAULT ''")
     except Exception:
         pass
     if stmts:
@@ -81,7 +83,14 @@ def m005_grievances(engine):
     SQLModel.metadata.create_all(engine)  # checkfirst: new tables only
 
 
-MIGRATIONS = [m001_base, m002_seed_udyam, m003_security_jobs, m004_oauth_state, m005_grievances]
+def m006_service_type(engine):
+    """TaskMap.service_type column: explicit service category from the citizen."""
+    SQLModel.metadata.create_all(engine)  # checkfirst: new tables only
+    _ensure_columns(engine)
+
+
+MIGRATIONS = [m001_base, m002_seed_udyam, m003_security_jobs, m004_oauth_state,
+              m005_grievances, m006_service_type]
 
 # Optionally add PostgreSQL-specific migrations
 _DB_URL = os.environ.get("DATABASE_URL", "sqlite:///./civic.db")
@@ -110,3 +119,6 @@ def migrate(engine):
                 fn(engine)
                 s.add(SchemaVersion(version=i))
                 s.commit()
+    # Idempotent column safety net (service_type etc.) on every boot, so a
+    # version-index shift can never skip an ALTER on an existing DB.
+    _ensure_columns(engine)

@@ -1,6 +1,7 @@
 # Civic Path Navigator — Municipal Bureaucracy Path Visualizer (PSWB 02)
 
-Citizens describe a civic task in plain words; the system turns fragmented
+Citizens describe a civic task in plain words — with city, state and type of
+service — and the system turns fragmented
 government websites into a **verified, step-by-step dependency map** — and,
 after DigiLocker login, into a **personal civic twin**: what you hold, what it
 unlocked, and your easiest next win.
@@ -18,8 +19,13 @@ npm run dev                                                         # in fronten
 
 ## What it does
 
-- **Roadmap graphs** — React Flow DAGs (dagre layout) of forms, offices, fees,
-  prerequisites; every step links its official `.gov` source.
+- **Roadmap graphs** — React Flow DAGs (dagre layered layout) of forms, offices,
+  fees, prerequisites; every step links its official `.gov` source. Edges are
+  inferred **across sources**: duplicate-step merge, prerequisite token-matching,
+  source-order bridging, LLM dependency refinement (validated: ids, dedupe,
+  acyclicity) — not just sequential chains.
+- **Admin step editing** — per-step update/add/delete (title, detail, fee,
+  official link, type) via `/admin/maps/{slug}/steps` with audit log.
 - **Personal twin** — JWT login → DigiLocker OAuth (consent-first) → per-user
   encrypted vault → deterministic eligibility engine → `/me/dashboard` +
   plain-words LLM brief (Bynara free models first, local Ollama fallback).
@@ -35,8 +41,8 @@ npm run dev                                                         # in fronten
 
 | Path | What |
 |---|---|
-| `backend/app/main.py` | FastAPI: auth, vault, dashboard, maps, progress, admin, jobs, webhooks |
-| `backend/app/worker.py` | Scrape cascade: trafilatura → crawl4ai → obscura → Bynara extract |
+| `backend/app/main.py` | FastAPI: auth, vault, dashboard, maps, progress, admin (incl. per-step editing), jobs, webhooks |
+| `backend/app/worker.py` | Scrape cascade (trafilatura → crawl4ai → obscura → Bynara) + cross-source merge & dependency inference |
 | `backend/app/watch.py` | Change detector (sha256 fingerprints, auto-unverify, alerts) |
 | `backend/app/digilocker.py` | MeriPehchaan OAuth2+PKCE + issued-docs (sandbox live, prod needs creds) |
 | `backend/app/eligibility.py` | Deterministic rules: have → unlocked → next-easiest |
@@ -51,7 +57,7 @@ npm run dev                                                         # in fronten
 ## Verify
 
 ```bash
-python -m pytest backend/tests/ -q        # 43 tests (up from 29)
+python -m pytest backend/tests/ -q        # 59 tests
 python backend/sim/run_sim.py             # 8-step life sim (mock world)
 python backend/sim/run_personas.py        # 20 personas, 20/20 sane
 ```

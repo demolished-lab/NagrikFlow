@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { SERVICE_TYPES } from './types';
 import type { CivicSource, PathwaySummary, UserProfile } from './types';
 
 type Props = {
@@ -50,6 +51,7 @@ export default function HomeView({ profile, onNavigate }: Props) {
   const [task, setTask] = useState('');
   const [city, setCity] = useState(profile?.city || '');
   const [state, setState] = useState(profile?.state || '');
+  const [serviceType, setServiceType] = useState('');
   const [pathways, setPathways] = useState<PathwaySummary[]>([]);
   const [pathwaysLoading, setPathwaysLoading] = useState(true);
   const [pathwaysError, setPathwaysError] = useState('');
@@ -98,9 +100,10 @@ export default function HomeView({ profile, onNavigate }: Props) {
     const locationPrefill = sessionStorage.getItem('civic_location_prefill');
     if (locationPrefill) {
       try {
-        const location = JSON.parse(locationPrefill) as { city?: string; state?: string };
+        const location = JSON.parse(locationPrefill) as { city?: string; state?: string; serviceType?: string };
         if (location.city) setCity(location.city);
         if (location.state) setState(location.state);
+        if (location.serviceType) setServiceType(location.serviceType);
       } catch { /* Ignore invalid transient guest-form data. */ }
       sessionStorage.removeItem('civic_location_prefill');
     }
@@ -120,7 +123,7 @@ export default function HomeView({ profile, onNavigate }: Props) {
     if (pollRef.current !== null) window.clearInterval(pollRef.current);
     setBuild({ status: 'discovering', slug: '', task: cleanTask });
     try {
-      const response = await api.buildTask(cleanTask, city.trim(), state.trim());
+      const response = await api.buildTask(cleanTask, city.trim(), state.trim(), serviceType);
       const jobId = Number(response.job_id);
       const slug = String(response.slug || '');
       setBuild({ status: 'building', slug, task: cleanTask, jobId });
@@ -186,6 +189,7 @@ export default function HomeView({ profile, onNavigate }: Props) {
             <div className="cv-location-fields">
               <label><span>City</span><input value={city} onChange={(event) => setCity(event.target.value)} placeholder="Hyderabad" aria-label="City" disabled={isBusy} /></label>
               <label><span>State</span><input value={state} onChange={(event) => setState(event.target.value)} placeholder="Telangana" aria-label="State" disabled={isBusy} /></label>
+              <label><span>Type of service</span><select value={serviceType} onChange={(event) => setServiceType(event.target.value)} aria-label="Type of service" disabled={isBusy}><option value="">Select a service type</option>{SERVICE_TYPES.map((kind) => <option key={kind} value={kind}>{kind}</option>)}</select></label>
             </div>
             <button className="cv-build-btn" type="submit" disabled={isBusy || !task.trim()}>{isBusy ? <><span className="cv-button-spinner" /> Building…</> : <>Build my pathway <span aria-hidden="true">›</span></>}</button>
           </div>

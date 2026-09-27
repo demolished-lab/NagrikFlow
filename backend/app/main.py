@@ -451,6 +451,7 @@ def get_map(
         "total": len(all_nodes),
     }
     return {"slug": m.slug, "title": m.title, "city": m.city, "state": m.state,
+            "service_type": m.service_type,
             "graph": {"nodes": filtered_nodes, "edges": filtered_edges},
             "filters": filter_options, "sources": json.loads(m.source_urls),
             "verified": bool(m.verified_at),
@@ -721,6 +722,148 @@ def admin_verify(slug: str, body: VerifyIn, admin: User = Depends(require_admin)
         return {"slug": slug, "verified": m.verified_at}
 
 
+# ---- Per-step admin editing (review, validate, UPDATE extracted info) ----
+
+STEP_TYPES = {"prereq", "action", "payment", "visit", "unlocked", "document"}
+
+
+class StepIn(BaseModel):
+    title: str
+    detail: str = ""
+    fee: str = ""
+    url: str = ""
+    type: str = "action"
+    depends_on: list[str] = []  # used when adding a step
+
+
+def _slug_step(title: str, existing: set) -> str:
+    base = re.sub(r"\W+", "-", title.strip().lower()).strip("-")[:40] or "step"
+    sid, n = base, 2
+    while sid in existing:
+        sid, n = f"{base}-{n}", n + 1
+    return sid
+
+
+@app.get("/admin/maps/{slug}/steps")
+def admin_map_steps(slug: str, admin: User = Depends(require_admin)):
+    """Full node/edge graph for the step editor."""
+    with Session(engine) as s:
+        m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
+        if not m:
+            raise HTTPException(404, "unknown map")
+        g = json.loads(m.graph_json)
+        return {"slug": slug, "title": m.title,
+                "nodes": g.get("nodes", []), "edges": g.get("edges", [])}
+
+
+@app.put("/admin/maps/{slug}/steps/{step_id}")
+def admin_update_step(slug: str, step_id: str, body: StepIn,
+                      admin: User = Depends(require_admin)):
+    """Edit an extracted step in place (title/detail/fee/url/type)."""
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(400, "title required")
+    url = body.url.strip()
+    if url:
+        url = _validate_fetch_url(url)  # SSRF + .gov/.nic policy applies to edits too
+    node_type = body.type if body.type in STEP_TYPES else "action"
+    with Session(engine) as s:
+        m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
+        if not m:
+            raise HTTPException(404, "unknown map")
+        g = json.loads(m.graph_json)
+        node = next((n for n in g.get("nodes", []) if n.get("id") == step_id), None)
+        if not node:
+            raise HTTPException(404, "unknown step")
+        before = dict(node)
+        node.update({"title": title, "detail": body.detail.strip(),
+                     "fee": body.fee.strip(), "url": url, "type": node_type})
+        m.graph_json = json.dumps(g)
+        s.add(m)
+        s.commit()
+    from . import audit as auditmod
+    auditmod.append("admin_step_edit", f"{slug}/{step_id}",
+                    f"Edited step '{title}'", diff_before=json.dumps(before),
+                    diff_after=json.dumps(node), agent="admin")
+    return {"slug": slug, "node": node}
+
+
+@app.post("/admin/maps/{slug}/steps")
+def admin_add_step(slug: str, body: StepIn, admin: User = Depends(require_admin)):
+    """Append a new step, optionally wired as a dependency of existing steps."""
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(400, "title required")
+    url = body.url.strip()
+    if url:
+        url = _validate_fetch_url(url)
+    node_type = body.type if body.type in STEP_TYPES else "action"
+    with Session(engine) as s:
+        m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
+        if not m:
+            raise HTTPException(404, "unknown map")
+        g = json.loads(m.graph_json)
+        nodes, edges = g.get("nodes", []), g.get("edges", [])
+        existing = {n.get("id") for n in nodes}
+        missing = [d for d in body.depends_on if d not in existing]
+        if missing:
+            raise HTTPException(400, f"unknown depends_on: {', '.join(missing)}")
+        new_id = _slug_step(title, existing)
+        nodes.append({"id": new_id, "type": node_type, "title": title,
+                      "detail": body.detail.strip(), "url": url,
+                      "fee": body.fee.strip()})
+        # new node has no outgoing edges yet -> dep->new can never close a cycle
+        for dep in body.depends_on:
+            if [dep, new_id] not in edges:
+                edges.append([dep, new_id])
+        g["nodes"], g["edges"] = nodes, edges
+        m.graph_json = json.dumps(g)
+        s.add(m)
+        s.commit()
+    from . import audit as auditmod
+    auditmod.append("admin_step_add", f"{slug}/{new_id}",
+                    f"Added step '{title}'", diff_after=json.dumps(nodes[-1]),
+                    agent="admin")
+    return {"slug": slug, "node": nodes[-1], "edges": edges}
+
+
+@app.delete("/admin/maps/{slug}/steps/{step_id}")
+def admin_delete_step(slug: str, step_id: str, admin: User = Depends(require_admin)):
+    """Remove a step and every edge that referenced it."""
+    with Session(engine) as s:
+        m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
+        if not m:
+            raise HTTPException(404, "unknown map")
+        g = json.loads(m.graph_json)
+        before_nodes = list(g.get("nodes", []))
+        kept = [n for n in g.get("nodes", []) if n.get("id") != step_id]
+        if len(kept) == len(before_nodes):
+            raise HTTPException(404, "unknown step")
+        edges = [e for e in g.get("edges", [])
+                 if len(e) >= 2 and step_id not in (e[0], e[1])]
+        esrc = json.loads(m.edge_sources) if m.edge_sources else {}
+
+        def _mentions(key: str) -> bool:
+            if "|" in key:  # new format "a|b"
+                a, _, b = key.partition("|")
+                return step_id in (a, b)
+            parts = re.findall(r"['\"]([^'\"]+)['\"]", key)  # legacy tuple repr
+            return step_id in parts if parts else key == step_id
+
+        esrc = {k: v for k, v in esrc.items() if not _mentions(k)}
+        g["nodes"], g["edges"] = kept, edges
+        m.graph_json = json.dumps(g)
+        m.edge_sources = json.dumps(esrc)
+        s.add(m)
+        s.commit()
+    from . import audit as auditmod
+    auditmod.append("admin_step_delete", f"{slug}/{step_id}",
+                    f"Deleted step '{step_id}'", diff_before=json.dumps(before_nodes),
+                    agent="admin")
+    return {"slug": slug, "removed": step_id, "steps": len(kept),
+            "edges": len(edges)}
+
+
 class BuildIn(BaseModel):
     task: str
     slug: str
@@ -824,6 +967,7 @@ class BuildTaskIn(BaseModel):
     task: str
     city: str = ""
     state: str = ""
+    service_type: str = ""
 
 
 class DiscoverIn(BaseModel):
@@ -848,8 +992,11 @@ async def build_task(body: "BuildTaskIn", bg: _BT, user: User = Depends(current_
         if existing:
             slug = f"{slug}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     
-    # Discover government sources
-    discovered = discovermod.discover(body.task, max_results=5)
+    # Discover government sources (task + explicit service category + state)
+    query = " ".join(part for part in
+                     (body.task.strip(), body.service_type.strip(), body.state.strip())
+                     if part)
+    discovered = discovermod.discover(query, max_results=5)
     urls = [r['url'] for r in discovered[:3] if r.get('url')]
     
     if not urls:
@@ -874,6 +1021,7 @@ async def build_task(body: "BuildTaskIn", bg: _BT, user: User = Depends(current_
         "urls": valid_urls,
         "city": body.city,
         "state": body.state,
+        "service_type": body.service_type,
         "user_id": user.id
     })
     
@@ -927,6 +1075,8 @@ def get_task_map(slug: str, user: User = Depends(current_user)):
             "slug": m.slug,
             "title": m.title,
             "city": m.city,
+            "state": m.state,
+            "service_type": m.service_type,
             "graph": json.loads(m.graph_json),
             "sources": json.loads(m.source_urls),
             "verified": bool(m.verified_at),

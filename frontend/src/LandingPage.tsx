@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SERVICE_TYPES } from './types';
 
 interface LandingProps {
   onLogin: () => void;
@@ -17,13 +18,16 @@ export default function LandingPage({ onLogin, onRegister }: LandingProps) {
   const [task, setTask] = useState('');
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
+  const [serviceType, setServiceType] = useState('');
   const [search, setSearch] = useState('');
 
   const continueToAuth = (intent?: string, mode: 'login' | 'register' = 'login') => {
     const cleanIntent = intent?.trim();
     if (cleanIntent) {
       sessionStorage.setItem('civic_task_prefill', cleanIntent);
-      sessionStorage.setItem('civic_location_prefill', JSON.stringify({ city: city.trim(), state: state.trim() }));
+      sessionStorage.setItem('civic_location_prefill', JSON.stringify({
+        city: city.trim(), state: state.trim(), serviceType: serviceType.trim(),
+      }));
     }
     if (mode === 'register') onRegister?.();
     else onLogin();
@@ -92,6 +96,7 @@ export default function LandingPage({ onLogin, onRegister }: LandingProps) {
                 <label className="cv-public-task-field"><span>I want to</span><input aria-label="Describe your civic task" value={task} onChange={(event) => setTask(event.target.value)} placeholder="e.g. Register a small business" /></label>
                 <label><span>City</span><input aria-label="City" value={city} onChange={(event) => setCity(event.target.value)} placeholder="Hyderabad" /></label>
                 <label><span>State</span><input aria-label="State" value={state} onChange={(event) => setState(event.target.value)} placeholder="Telangana" /></label>
+                <label><span>Type of service</span><select aria-label="Type of service" value={serviceType} onChange={(event) => setServiceType(event.target.value)}><option value="">Select a service type</option>{SERVICE_TYPES.map((kind) => <option key={kind} value={kind}>{kind}</option>)}</select></label>
                 <button className="cv-public-build" type="submit" disabled={!task.trim()}>Build my pathway <span aria-hidden="true">›</span></button>
               </div>
               <div className="cv-public-examples"><span>Examples:</span>{EXAMPLES.map((example, index) => <React.Fragment key={example}><button type="button" onClick={() => setTask(example)}>{example}</button>{index < EXAMPLES.length - 1 && <span className="cv-public-example-divider">|</span>}</React.Fragment>)}</div>

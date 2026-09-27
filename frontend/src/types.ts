@@ -6,6 +6,18 @@ export type CivicSource = string | {
   error?: string;
 };
 
+// Explicit "type of service" categories (PSWB 02: task + location + service type)
+export const SERVICE_TYPES = [
+  'Business & Trade',
+  'Certificates & Records',
+  'Transport & Licences',
+  'Property & Tax',
+  'Welfare & Schemes',
+  'Education & Skills',
+  'Health & Family',
+  'Other',
+] as const;
+
 export type PathwayStepPreview = {
   id: string;
   title: string;

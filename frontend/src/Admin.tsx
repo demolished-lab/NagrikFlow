@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { STR, lang } from './i18n';
-import { req } from './api';
+import { api, req } from './api';
 
 type AdminMap = {
   slug: string;
@@ -12,6 +12,18 @@ type AdminMap = {
   sources?: (string | { url?: string })[];
 };
 
+type AdminStep = {
+  id: string;
+  type: string;
+  title: string;
+  detail?: string;
+  url?: string;
+  fee?: string;
+};
+
+const STEP_TYPES = ['prereq', 'action', 'payment', 'visit', 'unlocked', 'document'];
+const EMPTY_STEP = { title: '', detail: '', fee: '', url: '', type: 'action' };
+
 export default function Admin() {
   const t = STR[lang()];
   const [maps, setMaps] = useState<AdminMap[]>([]);
@@ -21,6 +33,11 @@ export default function Admin() {
   const [form, setForm] = useState({ task: '', slug: '', urls: '' });
   const [building, setBuilding] = useState(false);
   const [checking, setChecking] = useState('');
+  const [editingSlug, setEditingSlug] = useState('');
+  const [steps, setSteps] = useState<AdminStep[]>([]);
+  const [draft, setDraft] = useState<AdminStep | null>(null);
+  const [newStep, setNewStep] = useState({ ...EMPTY_STEP });
+  const [stepBusy, setStepBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -110,6 +127,81 @@ export default function Admin() {
     }
   };
 
+  const loadSteps = async (slug: string) => {
+    const data = await api.adminSteps(slug);
+    setSteps(Array.isArray(data.nodes) ? data.nodes : []);
+  };
+
+  const toggleSteps = async (slug: string) => {
+    if (editingSlug === slug) {
+      setEditingSlug('');
+      setDraft(null);
+      return;
+    }
+    setErr('');
+    setNotice('');
+    try {
+      await loadSteps(slug);
+      setEditingSlug(slug);
+      setDraft(null);
+      setNewStep({ ...EMPTY_STEP });
+    } catch (error: any) {
+      setErr(String(error.message || error));
+    }
+  };
+
+  const saveStep = async (slug: string) => {
+    if (!draft || !draft.title.trim()) return;
+    setStepBusy(true);
+    setErr('');
+    setNotice('');
+    try {
+      await api.adminUpdateStep(slug, draft.id, draft);
+      await loadSteps(slug);
+      setDraft(null);
+      setNotice(`Step "${draft.title}" updated on ${slug}. Re-verify the map if it was already approved.`);
+    } catch (error: any) {
+      setErr(String(error.message || error));
+    } finally {
+      setStepBusy(false);
+    }
+  };
+
+  const deleteStep = async (slug: string, stepId: string) => {
+    setStepBusy(true);
+    setErr('');
+    setNotice('');
+    try {
+      await api.adminDeleteStep(slug, stepId);
+      await loadSteps(slug);
+      if (draft?.id === stepId) setDraft(null);
+      await load();
+      setNotice(`Step "${stepId}" removed from ${slug}.`);
+    } catch (error: any) {
+      setErr(String(error.message || error));
+    } finally {
+      setStepBusy(false);
+    }
+  };
+
+  const addStep = async (slug: string) => {
+    if (!newStep.title.trim()) return;
+    setStepBusy(true);
+    setErr('');
+    setNotice('');
+    try {
+      await api.adminAddStep(slug, newStep);
+      await loadSteps(slug);
+      setNewStep({ ...EMPTY_STEP });
+      await load();
+      setNotice(`Step "${newStep.title}" added to ${slug}.`);
+    } catch (error: any) {
+      setErr(String(error.message || error));
+    } finally {
+      setStepBusy(false);
+    }
+  };
+
   return <div className="cv-admin-view cv-anim-up">
     <header className="cv-admin-header">
       <div><span className="cv-eyebrow">ADMIN WORKSPACE</span><h1>Pathway verification desk</h1><p>Review source-backed civic maps, approve verified workflows, and recheck changes from official websites.</p></div>
@@ -136,7 +228,40 @@ export default function Admin() {
           <div className="cv-admin-map-actions">
             <button type="button" onClick={() => void verify(map.slug, !map.verified)}>{map.verified ? t.admUnverify : t.admVerify}</button>
             <button type="button" onClick={() => void recheck(map.slug)} disabled={Boolean(checking)}>{checking === map.slug ? 'Checking…' : t.admRecheck}</button>
+            <button type="button" onClick={() => void toggleSteps(map.slug)}>{editingSlug === map.slug ? 'Close editor' : 'Edit steps'}</button>
           </div>
+          {editingSlug === map.slug && <div className="cv-admin-step-editor" style={{ width: '100%' }}>
+            <h4>Step editor — {map.title}</h4>
+            <p className="cv-muted" style={{ margin: '0 0 8px' }}>Update titles, details, fees and official links. Edits persist until the map is rebuilt from sources.</p>
+            {steps.length === 0 ? <p className="cv-muted">This map has no steps yet — add the first one below.</p> : steps.map((step) => draft?.id === step.id
+              ? <div className="cv-admin-form" key={step.id} style={{ border: '1px dashed #c9d4d0', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                  <label className="cv-admin-field">Title<input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
+                  <div className="cv-admin-form-grid">
+                    <label className="cv-admin-field">Type<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value })}>{STEP_TYPES.map((kind) => <option key={kind} value={kind}>{kind}</option>)}</select></label>
+                    <label className="cv-admin-field">Fee<input value={draft.fee || ''} onChange={(event) => setDraft({ ...draft, fee: event.target.value })} placeholder="e.g. ₹500" /></label>
+                  </div>
+                  <label className="cv-admin-field">Official source URL<input value={draft.url || ''} onChange={(event) => setDraft({ ...draft, url: event.target.value })} placeholder="https://...gov.in/..." /></label>
+                  <label className="cv-admin-field">Detail<textarea value={draft.detail || ''} rows={2} onChange={(event) => setDraft({ ...draft, detail: event.target.value })} /></label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button type="button" onClick={() => void saveStep(map.slug)} disabled={stepBusy || !draft.title.trim()}>{stepBusy ? 'Saving…' : 'Save step'}</button>
+                    <button type="button" onClick={() => setDraft(null)} disabled={stepBusy}>Cancel</button>
+                  </div>
+                </div>
+              : <div className="cv-admin-step-row" key={step.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid #eef2f0' }}>
+                  <strong style={{ flex: 1 }}>{step.title}</strong>
+                  <small className="cv-muted">{step.type}{step.fee ? ` · ${step.fee}` : ''}</small>
+                  <button type="button" onClick={() => setDraft({ ...step })} disabled={stepBusy}>Edit</button>
+                  <button type="button" onClick={() => void deleteStep(map.slug, step.id)} disabled={stepBusy}>Delete</button>
+                </div>)}
+            <div className="cv-admin-form" style={{ marginTop: 10 }}>
+              <div className="cv-admin-form-grid">
+                <label className="cv-admin-field">New step title<input value={newStep.title} onChange={(event) => setNewStep({ ...newStep, title: event.target.value })} placeholder="e.g. Collect signed declaration" /></label>
+                <label className="cv-admin-field">Type<select value={newStep.type} onChange={(event) => setNewStep({ ...newStep, type: event.target.value })}>{STEP_TYPES.map((kind) => <option key={kind} value={kind}>{kind}</option>)}</select></label>
+              </div>
+              <label className="cv-admin-field">Official source URL<input value={newStep.url} onChange={(event) => setNewStep({ ...newStep, url: event.target.value })} placeholder="https://...gov.in/... (optional)" /></label>
+              <div><button type="button" onClick={() => void addStep(map.slug)} disabled={stepBusy || !newStep.title.trim()}>{stepBusy ? 'Saving…' : 'Add step'}</button></div>
+            </div>
+          </div>}
         </article>;
       })}</div>}
     </section>

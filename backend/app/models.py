@@ -57,6 +57,7 @@ class TaskMap(SQLModel, table=True):
     title: str = ""
     city: str = ""
     state: str = ""
+    service_type: str = ""  # e.g. "Business & Trade" (citizen's service category)
     graph_json: str = "{}"  # node_link_data: steps + edges
     verified_at: Optional[datetime] = None
     source_urls: str = "[]"

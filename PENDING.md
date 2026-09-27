@@ -45,6 +45,13 @@ Ordered by unblock-value. Checked items are done; unchecked need you or a key.
 - [x] Documented troubleshooting in README.md
 
 ## Done (do not regress)
+- [x] **PSWB 02 gap closures** — cross-source dependency inference (merge +
+  prereq matching + LLM refinement + component bridging, acyclic/validated,
+  JSON-safe `edge_sources` keys — fixed latent tuple-key crash), real dagre
+  layered layout in Roadmap, per-step admin editing (GET/PUT/POST/DELETE
+  `/admin/maps/{slug}/steps` + editor UI + audit log), explicit type-of-service
+  input (form → `/build-task` → job → `TaskMap.service_type` → API → UI).
+  59 pytest tests green.
 - [x] **Secrets** — rotation, 2h TTL, boot refusal without APP_SECRET.
 - [x] **Observability** — JSON logs + `/admin/metrics`.
 - [x] **Backups** — online snapshots to E: + retention + endpoints.
