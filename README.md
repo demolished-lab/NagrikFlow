@@ -8,6 +8,12 @@ unlocked, and your easiest next win.
 
 ![Roadmap smoke test](smoke.png)
 
+## Demo videos
+
+- [Widescreen product overview](demos/civic-pathfinder-demo.mp4)
+- [Portrait social cut](demos/civic-pathfinder-social.mp4)
+- [Demo notes and production workflow](demos/README.md) — synthetic simulator data only.
+
 ## Quick start (all free, ₹0)
 
 ```bash

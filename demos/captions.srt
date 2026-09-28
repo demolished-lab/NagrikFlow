@@ -1,0 +1,43 @@
+1
+00:00:00,000 --> 00:00:03,350
+Public services shouldn't feel like a maze.
+
+2
+00:00:03,350 --> 00:00:07,000
+Tell Civic Path Navigator what you need, and where.
+
+3
+00:00:07,000 --> 00:00:11,200
+It turns a big goal into clear steps,
+
+4
+00:00:11,200 --> 00:00:15,700
+organized around your location and linked to official sources.
+
+5
+00:00:15,700 --> 00:00:20,100
+Follow your pathway, see what's next,
+
+6
+00:00:20,100 --> 00:00:22,850
+and keep progress together.
+
+7
+00:00:22,850 --> 00:00:27,600
+With consent, connect your documents to understand
+
+8
+00:00:27,600 --> 00:00:32,150
+what you already have—and what may be easier to do next.
+
+9
+00:00:32,150 --> 00:00:35,450
+This walkthrough uses a demo account and sample sandbox data.
+
+10
+00:00:35,450 --> 00:00:38,500
+Always confirm current requirements with the official department.
+
+11
+00:00:38,500 --> 00:00:39,560
+Civic Path Navigator: find. Understand. Complete.
