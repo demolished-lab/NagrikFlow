@@ -7,8 +7,12 @@ Aadhaar+PAN. Reports pass/fail per persona.
 """
 import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, r"C:\Users\Raja\civic-pathfinder\backend")
+# Resolve the package from this checkout so the documented
+# ``python backend/sim/run_personas.py`` command works on Linux, macOS, and
+# Windows instead of depending on the original author's local path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import eligibility as elig  # noqa: E402
 

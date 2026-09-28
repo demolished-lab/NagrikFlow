@@ -422,7 +422,15 @@ def extract_guides(text: str, source_url: str, limit: int = 5) -> list[dict]:
 
 
 def heuristic_extract(text: str, url: str) -> list[dict]:
-    """Zero-LLM fallback: fees + document mentions + official links -> steps."""
+    """Zero-LLM fallback: fees + documents + explicit procedure steps.
+
+    Government pages often publish an ordered ``Steps`` list.  Previously the
+    fallback reduced a paperless page containing such a list to one generic
+    "Apply" node, which made the generated dependency graph materially less
+    useful whenever the LLM was unavailable.  Preserve the conservative
+    document/fee/link rules below, but promote an explicit numbered procedure
+    into its own source-grounded nodes first.
+    """
     text = text or ""
     fees = sorted(set(FEE_RE.findall(text)))[:5]
     docs = sorted(set(m.group(1) for m in DOC_RE.finditer(text)))[:10]
@@ -439,6 +447,62 @@ def heuristic_extract(text: str, url: str) -> list[dict]:
     doc_link = pick_link(text, url, DOC_LINK_HINTS)
     app_link = pick_link(text, url, LINK_HINTS)
     steps = []
+
+    # trafilatura emits ordered HTML lists as lines such as ``1. Validate
+    # PAN``.  Keep this intentionally narrow: only numbered lines are
+    # promoted, so arbitrary prose is never mistaken for a procedural step.
+    numbered = re.findall(
+        r"(?:^|\n)\s*(\d{1,2})[.)]\s+(.+?)(?=\n\s*\d{1,2}[.)]\s+|$)",
+        text.replace("\r\n", "\n"), re.S)
+    if not numbered:
+        # trafilatura commonly renders <ol> items as dash bullets.  Only
+        # inspect bullets after a procedure heading; document checklists
+        # elsewhere on the page must not become procedural roadmap nodes.
+        lines = text.replace("\r\n", "\n").splitlines()
+        heading = next((i for i, line in enumerate(lines)
+                        if re.match(r"^\s*(steps?|procedure|process)\s*:?\s*$",
+                                    line, re.I)), None)
+        if heading is not None:
+            for line in lines[heading + 1:]:
+                if re.match(r"^\s*(documents?|eligibility|fees?|for help)\b",
+                            line, re.I):
+                    break
+                item = re.match(r"^\s*[-•]\s+(.+?)\s*$", line)
+                if item:
+                    numbered.append((str(len(numbered) + 1), item.group(1)))
+                elif numbered and line.strip():
+                    # Continuation text belongs to the preceding bullet.
+                    numbered[-1] = (numbered[-1][0],
+                                    numbered[-1][1] + " " + line.strip())
+    ordered_steps = []
+    for number, raw_detail in numbered[:8]:
+        detail = re.sub(r"\s+", " ", raw_detail).strip(" -\t")
+        if len(detail) < 8:
+            continue
+        title = detail.rstrip(".")
+        if len(title) > 100:
+            title = title[:97].rsplit(" ", 1)[0] + "..."
+        lower = detail.lower()
+        node_type = "prereq" if any(word in lower for word in
+                                     ("required", "obtain", "gather", "verify",
+                                      "validate", "eligib")) else "action"
+        ordered_steps.append({
+            "id": f"step-{int(number)}",
+            "type": node_type,
+            "title": title,
+            "detail": detail,
+            "url": url,
+            "link": "",
+            "fee": "",
+        })
+    if ordered_steps:
+        # The page-level source is still the proof link.  Attach a verified
+        # application deep link only to the final procedure node; this avoids
+        # presenting the same CTA as if every step were a separate form.
+        ordered_steps[-1]["link"] = app_link
+        ordered_steps[-1]["fee"] = fees[0] if fees else ("₹0" if FREE_RE.search(text) else "")
+        steps.extend(ordered_steps)
+
     if docs:
         steps.append({"id": "docs", "type": "prereq", "title": "Gather documents",
                       "detail": "Mentioned on source: " + ", ".join(docs),
@@ -455,13 +519,14 @@ def heuristic_extract(text: str, url: str) -> list[dict]:
         detail = "See official page for current fee schedule."
     if NO_DOCS_RE.search(text):
         detail += " Paperless — no documents to upload (stated on the official page)."
-    steps.append({"id": "apply", "type": "action", "title": "Apply on official portal",
-                  "detail": detail,
-                  "url": url,
-                  # no deep link on the page? the fetched official source IS
-                  # the portal entry point — never leave the CTA empty
-                  "link": app_link or clean_link(url, url),
-                  "fee": fee})
+    if not ordered_steps:
+        steps.append({"id": "apply", "type": "action", "title": "Apply on official portal",
+                      "detail": detail,
+                      "url": url,
+                      # no deep link on the page? the fetched official source IS
+                      # the portal entry point — never leave the CTA empty
+                      "link": app_link or clean_link(url, url),
+                      "fee": fee})
     return steps
 
 
