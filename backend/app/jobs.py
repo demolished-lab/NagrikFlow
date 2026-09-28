@@ -185,6 +185,7 @@ def _dispatch_thread(engine, job_id: int, kind: str) -> None:
     from . import hermes as hermesmod
     targets = {
         "build": run_build,
+        "discover_build": run_discover_build,
         "recheck": run_recheck,
         "agent": agentmod.run_agent_job,
         "hermes": hermesmod.run_hermes_job,
@@ -196,6 +197,89 @@ def _dispatch_thread(engine, job_id: int, kind: str) -> None:
         return
     threading.Thread(target=target, args=(engine, job_id),
                      name=f"recover-{kind}-{job_id}", daemon=True).start()
+
+
+def run_discover_build(engine, job_id: int):
+    """Discover official sources, then hand the enriched row to run_build.
+
+    The external search process can be slow; keeping it in this worker stage
+    means the API returns a job id immediately and remains responsive.
+    """
+    if not claim(engine, job_id):
+        return
+    try:
+        with Session(engine) as s:
+            job = s.get(Job, job_id)
+            if not job:
+                return
+            payload = json.loads(job.payload)
+
+        from fastapi import HTTPException
+        from . import catalog as catalogmod
+        from . import discover as discovermod
+        from . import main as mainmod
+
+        bare = payload["task"].strip()
+        enriched = " ".join(part for part in
+                            (bare, payload.get("service_type", "").strip(),
+                             payload.get("state", "").strip()) if part)
+
+        def discover_urls(query: str) -> list[str]:
+            try:
+                found = discovermod.discover(query, max_results=8)
+            except Exception as e:
+                mainmod.obsmod.warn("discover",
+                                    "live URL discovery failed, catalog fallback",
+                                    q=query, error=e)
+                return []
+            return [r["url"] for r in found[:5] if r.get("url")]
+
+        urls = discover_urls(enriched)
+        if not urls and enriched != bare:
+            urls = discover_urls(bare)
+        discovery = "search"
+        if not urls:
+            urls = catalogmod.fallback_sources(
+                payload["task"], payload.get("service_type", ""),
+                payload.get("state", ""))
+            discovery = "catalog"
+
+        def valid(candidates: list[str]) -> list[str]:
+            out = []
+            for url in candidates:
+                try:
+                    out.append(mainmod._validate_fetch_url(url))
+                except (HTTPException, ValueError):
+                    continue
+            return out
+
+        valid_urls = valid(urls)
+        if not valid_urls and discovery != "catalog":
+            valid_urls = valid(catalogmod.fallback_sources(
+                payload["task"], payload.get("service_type", ""),
+                payload.get("state", "")))
+            if valid_urls:
+                discovery = "catalog"
+        if not valid_urls:
+            _finish(engine, job_id, "failed",
+                    {"error": "No valid government URLs found"})
+            return
+
+        payload["urls"] = valid_urls
+        payload["discovery"] = discovery
+        with Session(engine) as s:
+            job = s.get(Job, job_id)
+            if not job:
+                return
+            job.payload = json.dumps(payload)
+            job.status = "queued"
+            job.worker_id = ""
+            job.lease_until = None
+            s.add(job)
+            s.commit()
+        run_build(engine, job_id)
+    except Exception as e:
+        _finish(engine, job_id, "failed", {"error": str(e)[:300]})
 
 
 def run_build(engine, job_id: int):
