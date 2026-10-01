@@ -27,11 +27,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlmodel import Session
 
-# TOOL_SCHEMA / audit_read are re-exports: main.py routes serve
-# agentmod.TOOL_SCHEMA and agentmod.audit_read (unused in this module).
-from .agent_tools import TOOL_SCHEMA, TOOLS  # noqa: F401
+from .agent_tools import TOOL_SCHEMA, TOOLS
 from .audit import append as audit_append
+from .audit import read_last as audit_read
 from .llm import complete as llm_complete
+
+# Re-exports, not dead code: main.py serves agentmod.TOOL_SCHEMA and
+# agentmod.audit_read on its routes; __all__ keeps ruff's F401 off them.
+__all__ = ["TOOLS", "TOOL_SCHEMA", "audit_append", "audit_read", "llm_complete"]
 
 # ---- Agent config ---------------------------------------------------------
 
