@@ -115,8 +115,7 @@ def test_otp_per_account_lockout(client):
 
 def test_account_delete_erases_extended_rows(client, user):
     from app import main as M
-    from app.models import (Grievance, Job, Notification, RoadmapMilestone,
-                            User)
+    from app.models import Grievance, Job, Notification, RoadmapMilestone, User
     with Session(M.engine) as s:
         who = s.exec(select(User).where(User.email == user["email"])).first()
         uid = who.id
@@ -301,8 +300,8 @@ def test_discover_fetch_text_blocks_non_public(monkeypatch):
 
 def test_build_task_catalog_fallback_when_search_is_empty(client, user,
                                                           monkeypatch):
-    from app import main as M
     import app.jobs as J
+    from app import main as M
 
     monkeypatch.setattr(M.discovermod, "discover", lambda q, max_results=8: [])
     monkeypatch.setattr(M, "_validate_fetch_url", lambda u: u)
@@ -319,8 +318,9 @@ def test_build_task_catalog_fallback_when_search_is_empty(client, user,
 
 def test_build_task_skips_policy_rejected_urls(client, user, monkeypatch):
     from fastapi import HTTPException
-    from app import main as M
+
     import app.jobs as J
+    from app import main as M
 
     monkeypatch.setattr(M.discovermod, "discover",
                         lambda q, max_results=8: [
@@ -399,8 +399,9 @@ def test_build_task_catalog_fallback_when_all_search_urls_filtered(client, user,
     """Search returning ONLY non-government URLs must fall through to the
     curated catalog instead of 400ing."""
     from fastapi import HTTPException
-    from app import main as M
+
     import app.jobs as J
+    from app import main as M
 
     monkeypatch.setattr(M.discovermod, "discover",
                         lambda q, max_results=8: [
@@ -455,7 +456,7 @@ def test_guarded_redirect_blocks_internal_hop(monkeypatch):
     from app import worker as W
     monkeypatch.delenv("SSRF_PROBE", raising=False)
     monkeypatch.setattr(W, "_probe_target_ok",
-                        lambda u: False if "internal" in u else True)
+                        lambda u: "internal" not in u)
     handler = W._GuardedRedirect()
     req = W.urllib.request.Request("https://ok.example/")
     with pytest.raises(W._BadRedirect):
@@ -663,6 +664,7 @@ def test_build_task_field_length_caps(client, user):
 
 def test_progress_and_notification_unique_indexes(client, user):
     from sqlalchemy.exc import IntegrityError
+
     from app import main as M
     from app.models import Notification, Progress, User
     with Session(M.engine) as s:
@@ -693,6 +695,7 @@ def test_migrate_recovers_old_db_missing_new_columns(tmp_path):
     m007's ORM SELECT used to crash boot there — the column safety net only
     ran AFTER the migration loop. It must run before it too."""
     from sqlalchemy import create_engine, inspect, text
+
     from app.migrate import SchemaVersion, migrate
 
     engine = create_engine(f"sqlite:///{tmp_path}/old.db")

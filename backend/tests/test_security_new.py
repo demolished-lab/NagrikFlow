@@ -1,5 +1,4 @@
 """Tests for Telegram webhook secret validation."""
-import pytest
 
 
 def test_health_endpoint(client):

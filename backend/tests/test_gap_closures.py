@@ -163,8 +163,8 @@ def test_heuristic_extracts_deep_links():
 def test_llm_links_are_hallucination_proof(monkeypatch):
     """Foreign-host links dropped; same-host links kept ONLY when they
     literally appear in the fetched page (source-grounding)."""
-    from app import worker as W
     from app import llm as llmmod
+    from app import worker as W
 
     raw = json.dumps([
         {"id": "a", "type": "action", "title": "Apply", "detail": "x",
@@ -192,6 +192,7 @@ def test_llm_links_are_hallucination_proof(monkeypatch):
 def test_probe_link_drops_dead_and_keeps_indeterminate(monkeypatch):
     import urllib.error
     import urllib.request
+
     from app import worker as W
 
     monkeypatch.setenv("LINK_PROBE", "1")
@@ -229,6 +230,7 @@ def test_probe_link_drops_dead_and_keeps_indeterminate(monkeypatch):
 
 def test_probe_target_rejects_private_and_dns_failures(monkeypatch):
     import socket
+
     from app import worker as W
 
     def fake_gaip(ip_value):
@@ -253,6 +255,7 @@ def test_probe_target_rejects_private_and_dns_failures(monkeypatch):
 
 def test_redirect_guard_blocks_internal_redirects(monkeypatch):
     import pytest
+
     from app import worker as W
 
     monkeypatch.setattr(W, "_probe_target_ok", lambda url: False)
@@ -282,7 +285,9 @@ def test_build_map_nodes_carry_link(monkeypatch):
 
 def _seed_edit_map(slug="edit-map", edge_sources=None):
     from datetime import datetime, timezone
+
     from sqlmodel import Session
+
     from app import main as M
     from app.models import TaskMap
 
@@ -354,6 +359,7 @@ def test_admin_step_edit_validation(client, admin, monkeypatch):
 
 def test_admin_step_add_and_delete(client, admin, monkeypatch):
     from sqlmodel import Session
+
     from app import main as M
     from app.models import TaskMap
     monkeypatch.setattr(M, "_validate_fetch_url", lambda u: u)
@@ -403,7 +409,9 @@ def test_admin_step_edit_requires_admin(client, user):
 def test_step_mutations_revoke_approval_and_clean_progress(client, admin, user,
                                                            monkeypatch):
     from datetime import datetime, timedelta, timezone
+
     from sqlmodel import Session
+
     from app import main as M
     from app.models import Progress, RoadmapMilestone, TaskMap, User
     monkeypatch.setattr(M, "_validate_fetch_url", lambda u: u)
@@ -467,8 +475,8 @@ def test_cors_preflight_allows_admin_methods(client):
 # ---------------- Gap 4: type-of-service end-to-end ----------------
 
 def test_build_task_carries_service_type(client, user, monkeypatch):
-    from app import main as M
     import app.jobs as J
+    from app import main as M
 
     seen_query = {}
 
@@ -483,6 +491,7 @@ def test_build_task_carries_service_type(client, user, monkeypatch):
 
     def fake_run_build(engine, job_id):
         from sqlmodel import Session
+
         from app.models import Job, TaskMap
         with Session(engine) as s:
             job = s.get(Job, job_id)

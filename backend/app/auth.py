@@ -5,10 +5,8 @@ for multi-user login: per-user sub, short expiry, issuer check.
 """
 import hashlib
 import hmac
-import os
 import secrets
 import time
-from typing import Optional
 
 import jwt
 
@@ -43,7 +41,7 @@ def issue_token(user_id: int, email: str) -> str:
     )
 
 
-def verify_token(token: str) -> Optional[dict]:
+def verify_token(token: str) -> dict | None:
     """Try each known secret newest-first (rotation-safe)."""
     for _, secret in secretmod.secrets():
         try:

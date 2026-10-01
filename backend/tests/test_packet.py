@@ -149,8 +149,6 @@ def test_packet_markdown_download(client):
 
 
 def test_packet_scoping_hides_unverified_maps(client):
-    from app import main as M
-    from app.models import User
     _seed("packet-privacy", created_by=999999, verified=False)
     try:
         token = _token_for(client)

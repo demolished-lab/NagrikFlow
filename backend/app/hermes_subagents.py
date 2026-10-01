@@ -3,19 +3,16 @@
 Each sub-agent gets its own budget and runs independently.
 Results are collected and reported together.
 """
-import asyncio
 import json
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Callable, Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session
 
-from .models import Job as JobModel
 from .audit import append as audit_append
 from .hermes_core import run_hermes
-
+from .models import Job as JobModel
 
 _SUB_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="sub-agent")
 
@@ -26,7 +23,7 @@ def spawn_subagent(
     task: str,
     specialization: str = "general",
     budget: int = 15,
-    callback: Optional[Callable[[dict], None]] = None,
+    callback: Callable[[dict], None] | None = None,
 ) -> int:
     """Spawn a sub-agent task. Returns sub-job ID for polling."""
     from .models import Job

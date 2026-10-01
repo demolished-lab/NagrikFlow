@@ -48,11 +48,11 @@ def send(to: str, subject: str, body: str) -> dict:
 
 def otp_message(code: str) -> tuple[str, str]:
     return ("Your Civic Path login code",
-            f"Your verification code is {code}. Valid 10 minutes. "
-            "Never share it.")
+            (f"Your verification code is {code}. Valid 10 minutes. "
+             "Never share it."))
 
 
 def due_message(title: str, due: str) -> tuple[str, str]:
     return (f"Reminder: {title} due {due}",
-            f"{title} needs attention by {due}. Open your Civic Path "
-            "dashboard to see the exact step and official link.")
+            (f"{title} needs attention by {due}. Open your Civic Path "
+             "dashboard to see the exact step and official link."))

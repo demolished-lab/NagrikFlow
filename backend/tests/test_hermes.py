@@ -1,14 +1,13 @@
 """Tests for the mini-Hermes worker module."""
-import pytest
 
-from app import hermes as hermesmod
 
 
 def test_hermes_link_status_next(client):
     from sqlmodel import Session
-    from app import hermes as H
+
     import app.main as M
-    from app.models import LinkCode, User, VaultItem
+    from app import hermes as H
+    from app.models import LinkCode, VaultItem
 
     r = client.post("/auth/register", json={
         "email": "h@t.co", "password": "pw123456", "name": "Hari",

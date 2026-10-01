@@ -7,7 +7,6 @@ Architecture:
 - Full audit trail with before/after diffs
 - Memory context maintained across turns
 """
-import asyncio
 import json
 import os
 import re
@@ -16,17 +15,15 @@ import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
-from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from .llm import complete as llm_complete
-from .audit import append as audit_append
-from .audit import read_last as audit_read
-from .agent_tools import TOOLS, TOOL_SCHEMA, BASE as PROJECT_BASE
 from sqlmodel import Session
 
+from .agent_tools import BASE as PROJECT_BASE
+from .agent_tools import TOOL_SCHEMA, TOOLS
+from .audit import append as audit_append
+from .llm import complete as llm_complete
 
 # ---- Configuration --------------------------------------------------------
 
@@ -145,7 +142,6 @@ Return JSON: {{\"steps\": [...], \"risks\": [...], \"estimated_turns\": N}}"""
 @_register_tool
 def spawn_subagent(task: str, specialization: str = "general", budget: int = SUB_AGENT_BUDGET) -> dict:
     """Spawn a parallel sub-agent for specialized work. Returns sub-job ID."""
-    from .subagent import spawn_subagent as _spawn
     # This will be wired to the main app's engine later
     return {"status": "sub_agent_spawned", "task": task, "specialization": specialization}
 
@@ -213,7 +209,7 @@ def patch_file(path: str, old_string: str, new_string: str, replace_all: bool = 
 
 @_register_tool
 def search_files(pattern: str, path: str = ".", target: str = "content",
-                 file_glob: Optional[str] = None, limit: int = 30) -> dict:
+                 file_glob: str | None = None, limit: int = 30) -> dict:
     """Search file contents or find files by glob."""
     p = PROJECT_BASE / path.lstrip("/")
     try:
@@ -241,8 +237,8 @@ def search_files(pattern: str, path: str = ".", target: str = "content",
 
 
 @_register_tool
-def run_cmd(command: str, cwd: Optional[str] = None, timeout: int = 120,
-            env_extra: Optional[dict] = None) -> dict:
+def run_cmd(command: str, cwd: str | None = None, timeout: int = 120,
+            env_extra: dict | None = None) -> dict:
     """Run shell command and return output."""
     import subprocess
     c = cwd or str(PROJECT_BASE)
@@ -326,7 +322,7 @@ def git_status() -> dict:
 
 
 @_register_tool
-def git_commit(message: str, files: list[str] = None) -> dict:
+def git_commit(message: str, files: list[str] | None = None) -> dict:
     """Commit changes to git."""
     import subprocess
     try:
@@ -433,7 +429,7 @@ def read_config(key: str = "") -> dict:
 
 
 @_register_tool
-def ask_user(question: str, options: list[str] = None) -> dict:
+def ask_user(question: str, options: list[str] | None = None) -> dict:
     """Ask user a question (for interactive mode)."""
     # In non-interactive mode, log the question
     print(f"\n[HERMES QUESTION]: {question}")
@@ -469,7 +465,6 @@ def fetch_url(url: str) -> dict:
 def run_backup(engine=None) -> dict:
     """Run database backup now."""
     try:
-        from .backup import run as _backup_run
         # We need engine - try to get from import
         return {"status": "call with engine parameter"}
     except Exception as e:
@@ -493,10 +488,11 @@ def path_packet(slug: str) -> dict:
     (final redirect URLs, fetch tier) and guide documents — as citizen-ready
     Markdown the chat can relay."""
     try:
-        from .main import engine
-        from . import packet as packetmod
-        from .models import TaskMap
         from sqlmodel import select
+
+        from . import packet as packetmod
+        from .main import engine
+        from .models import TaskMap
         with Session(engine) as s:
             m = s.exec(select(TaskMap).where(TaskMap.slug == slug)).first()
             if not m:
@@ -520,7 +516,7 @@ def deploy_frontend() -> dict:
 
 
 @_register_tool
-def commit_changes(message: str, files: list[str] = None) -> dict:
+def commit_changes(message: str, files: list[str] | None = None) -> dict:
     """Commit changes to git with message."""
     try:
         import subprocess

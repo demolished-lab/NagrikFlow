@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import httpx  # noqa: E402
+import httpx
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 API = f"https://api.telegram.org/bot{TOKEN}" if TOKEN else ""
@@ -24,7 +24,9 @@ API = f"https://api.telegram.org/bot{TOKEN}" if TOKEN else ""
 def handle_start(chat_id: str, code: str) -> str:
     """Same binding rules as POST /hooks/telegram, minus HTTP."""
     from datetime import datetime, timedelta, timezone
+
     from sqlmodel import Session, select
+
     import app.main as M
     from app.models import LinkCode, User
     with Session(M.engine) as s:
@@ -51,6 +53,7 @@ def handle_start(chat_id: str, code: str) -> str:
 
 def handle_status(chat_id: str) -> str:
     from sqlmodel import Session, select
+
     import app.main as M
     from app.models import Progress, User, VaultItem
     with Session(M.engine) as s:
@@ -66,6 +69,7 @@ def handle_status(chat_id: str) -> str:
 
 def handle_next(chat_id: str) -> str:
     from sqlmodel import Session, select
+
     import app.main as M
     from app import eligibility as elig
     from app.models import User, VaultItem

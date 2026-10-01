@@ -2,9 +2,6 @@
 endpoints, integration doctor, cloud/Postgres backups."""
 import json as _json
 
-from sqlmodel import select
-
-
 # ---------------- 1. nltk runtime guard (PYSEC-2026-3740) ----------------
 
 def test_nltk_guard_blocks_traversal_and_absolutes():
@@ -62,6 +59,7 @@ def test_memory_store_429_with_retry_after(client):
 
 def test_redis_store_shared_across_workers(client, monkeypatch):
     import fakeredis
+
     from app import security as S
     from app import security_redis as SR
 
@@ -184,7 +182,8 @@ def test_backup_pg_dump_command(client, monkeypatch, tmp_path):
     def fake_run(cmd, **kw):
         calls["cmd"] = cmd
         calls["env"] = kw.get("env", {})
-        open(cmd[cmd.index("-f") + 1], "wb").write(b"PGDMP")
+        with open(cmd[cmd.index("-f") + 1], "wb") as fh:
+            fh.write(b"PGDMP")
         class R:
             returncode, stderr = 0, ""
         return R()
@@ -228,10 +227,10 @@ def test_backup_s3_upload(client, monkeypatch, tmp_path):
 
 
 def test_backup_s3_failure_is_nonfatal(client, monkeypatch, tmp_path):
+    import boto3
+
     from app import backup as B
     from app import main as M
-
-    import boto3
 
     def boom(*a, **k):
         raise RuntimeError("network down")

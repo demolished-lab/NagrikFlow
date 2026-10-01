@@ -46,9 +46,9 @@ def test_backup_roundtrip_to_tmpdir(tmp_path, client, admin):
 
 
 def test_backup_validate_and_restore(tmp_path):
-    import pytest
     from pathlib import Path
 
+    import pytest
     from sqlalchemy import create_engine
     from sqlmodel import SQLModel
 

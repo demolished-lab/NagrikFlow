@@ -1,6 +1,4 @@
 """Test coverage for Mini-Hermes agent subsystem."""
-import json
-from pathlib import Path
 
 from sqlmodel import Session, select
 
@@ -36,7 +34,6 @@ def test_agent_run_requires_admin(client):
 def test_grievance_model_exists(client):
     """Grievance table is created by migrations."""
     import app.main as M
-    from sqlmodel import Session, select
     from app.models import Grievance
     with Session(M.engine) as s:
         count = len(s.exec(select(Grievance)).all())

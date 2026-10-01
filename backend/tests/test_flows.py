@@ -54,6 +54,7 @@ def test_telegram_link_isolation(client):
 
 def test_my_pathways_uses_saved_data_and_is_user_scoped(client, user):
     from sqlmodel import Session
+
     from app import main as M
     from app.models import Job, Progress, TaskMap
 

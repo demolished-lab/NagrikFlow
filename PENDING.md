@@ -27,7 +27,9 @@ Ordered by unblock-value. Checked items are done; unchecked need you or a key.
 - [x] **page-agent Guide-me** — installed, per-step Q&A with user's own key (app key never leaves server).
 - [x] **Postgres-ready** — `psycopg` driver in, URL-driven; full suite now runs
   on Postgres 16 in CI (`backend-pg` job with a real postgres service).
-- [ ] **Hermes worker rebuild** — source absent; only `alerts.py` + webhook exist.
+- [x] **Hermes worker rebuild** — done: `app/hermes_rebuild.py` (webhook mode +
+  long-poll fallback, backoff, rate limiting) on top of `hermes.py`,
+  `hermes_core.py` (27 KB, tools + LLM lane) and `hermes_subagents.py`.
 - [x] **Background jobs** — queued build/recheck + polling UI (single-process; Redis later).
 - [x] **Dynamic task-to-roadmap flow** — citizens describe task → discover sources → build map async
 - [x] **Hash-based routing** — /roadmap/:slug navigation
@@ -203,3 +205,22 @@ Full re-audit verdict was "not production-ready"; every listed blocker fixed:
 - [x] **Mini-Hermes agent subsystem** — 10 tools (read/write/patch/search/cmd), audit log, sub-agent spawning via ThreadPoolExecutor, REST API + frontend widget
 - [x] **Landing page** — tricolor branding, feature grid, trust badges, bilingual (en/hi) with proper Devanagari rendering
 - [x] **Full Hindi i18n** — all UI strings including agent panel and landing page translated
+
+## Lint gate (2026-09-30, audit loop after round-5)
+- [x] **ruff gate in CI** — `ruff==0.16.9` pinned in the backend job, runs
+  `ruff check backend/app backend/tests` before pytest; `backend/ruff.toml`
+  anchors config discovery (identical results from repo root or `backend/`)
+  and carries the FastAPI `B008` idiom exceptions (`File`/`Query`/`Depends`).
+- [x] **405 issues -> 0** — 185 auto-fixes (imports, unused noqas, UP/PIE)
+  + manual fixes for ISC004 implicit-concat, RUF013 implicit-Optional,
+  SIM102/103/115/201/211, TRY004, PIE810, C401, RUF007, RUF059, F841.
+  Real bugs found and fixed: **DPO letter NameError** (undefined
+  `{Name}`/`{Title}`/`{Organization}` in the f-string crashed every call)
+  and **load-bearing re-exports** (`agentmod.TOOL_SCHEMA`,
+  `agentmod.audit_read`, `M.discovermod`) that F401 auto-removal had broken —
+  restored with explicit `# noqa: F401` + comments (6 tests were failing).
+- [x] **Deferred rules are documented, not silently skipped** — counts live in
+  `backend/ruff.toml`: BLE001 (103 blind-except, defensive scraping by
+  design), S110 (11), PLW1510 (21 subprocess sites inspect returncode
+  manually), DTZ005/006 (7 naive datetimes, needs a tz audit first).
+- Verified: **pytest 135/135**, `ruff check` 0 errors from both cwds.

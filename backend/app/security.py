@@ -12,9 +12,9 @@ import time
 from collections import deque
 
 from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from .obs import warn
-from fastapi.responses import JSONResponse
 
 # prefix -> (max_hits, window_seconds)
 LIMITS = {

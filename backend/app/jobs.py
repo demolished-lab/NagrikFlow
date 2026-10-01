@@ -215,6 +215,7 @@ def run_discover_build(engine, job_id: int):
             payload = json.loads(job.payload)
 
         from fastapi import HTTPException
+
         from . import catalog as catalogmod
         from . import discover as discovermod
         from . import main as mainmod
@@ -283,8 +284,8 @@ def run_discover_build(engine, job_id: int):
 
 
 def run_build(engine, job_id: int):
-    from . import worker as workermod
     from . import watch as watchmod
+    from . import worker as workermod
     if not claim(engine, job_id):
         return  # another dispatcher (poller / recovery / bg task) owns this job
     with Session(engine) as s:

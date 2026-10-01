@@ -2,6 +2,7 @@
 Redirect HTTP to HTTPS when running behind a reverse proxy with SSL termination.
 """
 import os
+
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import RedirectResponse
@@ -12,7 +13,7 @@ class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         # Only enforce in production (check env var)
-        if not os.environ.get("FORCE_HTTPS", "").lower() == "true":
+        if os.environ.get("FORCE_HTTPS", "").lower() != "true":
             return await call_next(request)
 
         # If request is HTTP and we're not behind a proxy, redirect

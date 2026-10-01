@@ -11,14 +11,11 @@ import asyncio
 import logging
 import os
 import sys
-import time
 from pathlib import Path
-from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
-from fastapi import HTTPException
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 API = f"https://api.telegram.org/bot{TOKEN}" if TOKEN else ""

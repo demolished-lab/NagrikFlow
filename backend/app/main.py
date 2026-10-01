@@ -1,23 +1,25 @@
 """Civic Path Navigator API: auth -> consent -> vault -> personalized dashboard."""
+import ipaddress
 import json
 import os
 import re
-import ipaddress
 import socket
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Header, Request
-from fastapi.responses import Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+
 from .https_middleware import HTTPSRedirectMiddleware
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-from sqlmodel import Session, SQLModel, create_engine, select
-from sqlalchemy import delete as _sa_delete, text as _sa_text
+from sqlalchemy import delete as _sa_delete
+from sqlalchemy import text as _sa_text
+from sqlmodel import Session, create_engine, select
 
 
 def _load_env():
@@ -32,27 +34,40 @@ def _load_env():
 
 _load_env()
 
-from . import auth as authmod  # noqa: E402  (needs .env first)
-from . import digilocker as dg  # noqa: E402
-from . import eligibility as elig  # noqa: E402
-from . import llm as llmmod  # noqa: E402
-from . import worker as workermod  # noqa: E402
-from . import watch as watchmod  # noqa: E402
-from . import security as secmod  # noqa: E402
-from . import notify as notifmod  # noqa: E402
-from . import jobs as jobsmod  # noqa: E402
-from . import discover as discovermod  # noqa: E402
-from . import obs as obsmod  # noqa: E402
-from . import backup as backupmod  # noqa: E402
-from . import edge as edgemod  # noqa: E402
-from . import agent as agentmod  # noqa: E402
-from . import hermes_core as hermesmod  # noqa: E402
-from . import hermes_subagents as submod  # noqa: E402
-from . import telegram_validate as tgramval  # noqa: E402
-from . import llm_health as llmhealth  # noqa: E402
-from fastapi import BackgroundTasks as _BT  # noqa: E402
-from .models import (Consent, Grievance, Job, LinkCode, Notification, OAuthState,
-                     OtpCode, Progress, RoadmapMilestone, TaskMap, User, VaultItem)
+from fastapi import BackgroundTasks as _BT
+
+from . import agent as agentmod
+from . import auth as authmod
+from . import backup as backupmod
+from . import digilocker as dg
+from . import discover as discovermod  # noqa: F401 - tests monkeypatch M.discovermod
+from . import edge as edgemod
+from . import eligibility as elig
+from . import hermes_core as hermesmod
+from . import hermes_subagents as submod
+from . import jobs as jobsmod
+from . import llm as llmmod
+from . import llm_health as llmhealth
+from . import notify as notifmod
+from . import obs as obsmod
+from . import security as secmod
+from . import telegram_validate as tgramval
+from . import watch as watchmod
+from . import worker as workermod
+from .models import (
+    Consent,
+    Grievance,
+    Job,
+    LinkCode,
+    Notification,
+    OAuthState,
+    OtpCode,
+    Progress,
+    RoadmapMilestone,
+    TaskMap,
+    User,
+    VaultItem,
+)
 
 ADMIN_DEFAULT = "demo@civic.test" if os.environ.get("ALLOW_DEV_SECRET") == "1" else ""
 ADMIN_EMAILS = {e.strip().lower() for e in
@@ -123,7 +138,7 @@ def _validate_fetch_url(url: str) -> str:
         if local_dev:
             return url
         host = parsed.hostname.rstrip(".").lower()
-        if not (host.endswith(".gov.in") or host.endswith(".nic.in") or host in {"gov.in", "nic.in"}):
+        if not (host.endswith((".gov.in", ".nic.in")) or host in {"gov.in", "nic.in"}):
             raise ValueError
         addresses = {item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
         if any(ipaddress.ip_address(addr).is_private or ipaddress.ip_address(addr).is_loopback
@@ -317,8 +332,8 @@ class OtpVerify(BaseModel):
 
 @app.post("/auth/otp/verify")
 def otp_verify(body: OtpVerify):
-    from datetime import datetime, timedelta, timezone
     import hashlib as _hl
+    from datetime import datetime, timedelta, timezone
     with Session(engine) as s:
         u = s.exec(select(User).where(User.email == body.email)).first()
         if not u:
@@ -699,7 +714,6 @@ def get_notifications(user: User = Depends(current_user)):
             # map removed/unreviewed between listing and now: skip it, the
             # remaining pathways' deadlines still surface below
             continue
-    now = datetime.now(timezone.utc)
     with Session(engine) as s:
         for milestone in milestones:
             if milestone["status"] == "completed" or milestone["days_left"] > 7:
@@ -825,7 +839,7 @@ def telegram_link_code(user: User = Depends(current_user)):
         s.add(LinkCode(user_id=user.id, code=code))
         s.commit()
     return {"code": code, "expires_min": 15,
-            "instruction": "Send '/start {}' to our Telegram bot.".format(code)}
+            "instruction": f"Send '/start {code}' to our Telegram bot."}
 
 
 @app.post("/hooks/telegram")
@@ -1231,8 +1245,8 @@ async def admin_integrations(probe: bool = False,
                              admin: User = Depends(require_admin)):
     """Config status of every external integration; secrets are never echoed.
     probe=true adds live pings (Telegram getMe, Redis ping)."""
-    from . import security_redis as srmod
     from . import nltk_guard as ngmod
+    from . import security_redis as srmod
     redis_url = os.environ.get("REDIS_URL", "").strip()
     redis_ok = None
     if redis_url:
@@ -1626,7 +1640,8 @@ def data_export(user: User = Depends(current_user)):
 def consent_withdraw(user: User = Depends(current_user)):
     """Withdraw DigiLocker consent → immediately erases vault items.
     Returns count of erased records."""
-    from datetime import datetime, timezone as _tz
+    from datetime import datetime
+    from datetime import timezone as _tz
     with Session(engine) as s:
         # Mark consents withdrawn
         consents = s.exec(select(Consent).where(
@@ -1765,7 +1780,8 @@ def admin_grievance_resolve(gid: int, body: GrievanceResolveIn,
         g.status = body.status
         g.resolution = body.resolution
         if body.status in ("resolved", "rejected"):
-            from datetime import datetime as _dt, timezone as _tz
+            from datetime import datetime as _dt
+            from datetime import timezone as _tz
             g.resolved_at = _dt.now(_tz.utc)
         s.add(g)
         s.commit()

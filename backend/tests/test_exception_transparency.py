@@ -10,7 +10,6 @@ Never a silent `except: pass` on a path that degrades user-visible output.
 import json
 import logging
 
-import pytest
 from sqlmodel import Session
 
 GOOD_NODE = {"id": "a", "type": "action", "title": "Apply",
@@ -55,7 +54,7 @@ def test_llm_extract_unparseable_reply_falls_back(monkeypatch, caplog):
         worker.llmmod, "_chat_raw",
         lambda p, max_tokens=400: ("I cannot help with that.", "m"))
     with caplog.at_level(logging.WARNING, logger="civic"):
-        steps, lane, err = worker._llm_extract_full(
+        _steps, lane, err = worker._llm_extract_full(
             "gov page text", "https://x.gov.in/", "t")
     assert lane == "heuristic"
     assert "unparseable" in err
@@ -70,8 +69,8 @@ def test_llm_extract_requests_large_output(monkeypatch):
 
     def fake(prompt, max_tokens=400):
         seen["max_tokens"] = max_tokens
-        return ('[{"id":"a","type":"action","title":"Apply",'
-                '"detail":"d","fee":"","link":""}]', "m")
+        return (('[{"id":"a","type":"action","title":"Apply",'
+                 '"detail":"d","fee":"","link":""}]'), "m")
 
     monkeypatch.setattr(worker.llmmod, "_chat_raw", fake)
     steps, lane, err = worker._llm_extract_full("text", "https://x.gov.in/", "t")

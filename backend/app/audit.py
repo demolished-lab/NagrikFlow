@@ -3,7 +3,6 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 AUDIT_DIR = Path(os.environ.get("CIVIC_AGENT_AUDIT_DIR",
                                  Path(__file__).resolve().parent.parent.parent / "agent_audit"))

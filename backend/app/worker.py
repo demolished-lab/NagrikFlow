@@ -15,6 +15,7 @@ import subprocess
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from itertools import pairwise
 from urllib.parse import unquote, urlparse
 
 import trafilatura
@@ -89,8 +90,9 @@ def fetch_tier1(url: str) -> str:
 
 def _fetch_tier2_full(url: str) -> tuple[str, str]:
     final = guard_chain(url)  # validate the whole redirect chain first
-    from crawl4ai import AsyncWebCrawler
     import asyncio
+
+    from crawl4ai import AsyncWebCrawler
 
     async def _go():
         async with AsyncWebCrawler() as crawler:
@@ -196,9 +198,9 @@ def cascade_fetch(url: str) -> tuple[str, str]:
     return text, tier
 
 
-FEE_RE = re.compile(r"(?:fee|fees|charge|cost|Rs\.?|₹)\s*[:\-]?\s*([₹Rs\.\s]*\d[\d,]*)", re.I)
-DOC_RE = re.compile(r"\b(Aadhaar|PAN|passport|ration card|birth certificate|address proof|bank (?:statement|passbook)|photograph|Form\s*\d*[A-Z]*)\b", re.I)
-URL_RE = re.compile(r"https?://[^\s\]\)\"'<>]+", re.I)
+FEE_RE = re.compile(r"(?:fee|fees|charge|cost|Rs\.?|₹)\s*[:\-]?\s*([₹Rs\.\s]*\d[\d,]*)", re.IGNORECASE)
+DOC_RE = re.compile(r"\b(Aadhaar|PAN|passport|ration card|birth certificate|address proof|bank (?:statement|passbook)|photograph|Form\s*\d*[A-Z]*)\b", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s\]\)\"'<>]+", re.IGNORECASE)
 LINK_HINTS = ("form", "apply", "register", "registration", "pay", "payment",
               "download", "renew", "certif", "licen", "application", "applyfor")
 DOC_LINK_HINTS = ("form", "doc", "download", "certificate", "checklist", "template")
@@ -220,7 +222,7 @@ NO_DOCS_RE = re.compile(
     r"|\bwithout\b[^.]{0,30}\b(?:documents?|proof)\b"
     r"|\bnothing to (?:upload|submit)\b"
     r"|\bnot require\b[^.]{0,30}\b(?:documents?|proof)\b)",
-    re.I)
+    re.IGNORECASE)
 
 # Page states the service is free ("Registration is Free of Cost", "No fee").
 FREE_RE = re.compile(
@@ -230,13 +232,13 @@ FREE_RE = re.compile(
     r"|\bno\s+(?:fee|fees|charge|cost|payment)\b"
     r"|\b(?:fee|charge|cost)\s*[:\-]?\s*(?:rs\.?|₹)?\s*0(?:\.00)?\b"
     r"|₹\s*0\b)",
-    re.I)
+    re.IGNORECASE)
 
 # A bare document mention (a word in prose) is not a documents-to-gather
 # requirement; require a requirement verb near the mention.
 REQ_DOC_RE = re.compile(
     r"\b(?:require[ds]?|must|need(?:ed)?|bring|carry|present|produce|upload|"
-    r"attach|submit|enclose)\b", re.I)
+    r"attach|submit|enclose)\b", re.IGNORECASE)
 
 
 def _url_host(u: str) -> str:
@@ -247,7 +249,7 @@ def _url_host(u: str) -> str:
 
 
 def _govish(host: str) -> bool:
-    return bool(host) and (host.endswith(".gov.in") or host.endswith(".nic.in")
+    return bool(host) and (host.endswith((".gov.in", ".nic.in"))
                            or host in {"gov.in", "nic.in"})
 
 
@@ -332,9 +334,7 @@ def probe_link(link: str, timeout: float = 4.0):
     except _BadRedirect:
         return False
     except urllib.error.HTTPError as e:
-        if e.code in (404, 410):
-            return False
-        return True  # server answered (incl. 403/405 bot-walls, 5xx)
+        return e.code not in (404, 410)  # server answered (incl. 403/405 bot-walls, 5xx)
     except Exception:
         return None
 
@@ -433,7 +433,7 @@ def heuristic_extract(text: str, url: str) -> list[dict]:
     """
     text = text or ""
     fees = sorted(set(FEE_RE.findall(text)))[:5]
-    docs = sorted(set(m.group(1) for m in DOC_RE.finditer(text)))[:10]
+    docs = sorted({m.group(1) for m in DOC_RE.finditer(text)})[:10]
     # "paperless / no documents to upload" pages (e.g. Udyam) must not get a
     # fabricated document-gathering step just because PAN is mentioned in prose
     if docs and NO_DOCS_RE.search(text):
@@ -453,7 +453,7 @@ def heuristic_extract(text: str, url: str) -> list[dict]:
     # promoted, so arbitrary prose is never mistaken for a procedural step.
     numbered = re.findall(
         r"(?:^|\n)\s*(\d{1,2})[.)]\s+(.+?)(?=\n\s*\d{1,2}[.)]\s+|$)",
-        text.replace("\r\n", "\n"), re.S)
+        text.replace("\r\n", "\n"), re.DOTALL)
     if not numbered:
         # trafilatura commonly renders <ol> items as dash bullets.  Only
         # inspect bullets after a procedure heading; document checklists
@@ -461,11 +461,11 @@ def heuristic_extract(text: str, url: str) -> list[dict]:
         lines = text.replace("\r\n", "\n").splitlines()
         heading = next((i for i, line in enumerate(lines)
                         if re.match(r"^\s*(steps?|procedure|process)\s*:?\s*$",
-                                    line, re.I)), None)
+                                    line, re.IGNORECASE)), None)
         if heading is not None:
             for line in lines[heading + 1:]:
                 if re.match(r"^\s*(documents?|eligibility|fees?|for help)\b",
-                            line, re.I):
+                            line, re.IGNORECASE):
                     break
                 item = re.match(r"^\s*[-•]\s+(.+?)\s*$", line)
                 if item:
@@ -547,7 +547,7 @@ def _llm_extract_full(text: str, url: str, task: str) -> tuple[list[dict], str, 
         warn("extract", "LLM extraction failed, rules fallback", url=url, error=e)
         return heuristic_extract(text, url), "heuristic", reason
     import json
-    m = re.search(r"\[.*\]", raw, re.S)
+    m = re.search(r"\[.*\]", raw, re.DOTALL)
     try:
         steps = json.loads(m.group(0)) if m else []
         if not isinstance(steps, list) or not steps:
@@ -572,15 +572,10 @@ def llm_extract(text: str, url: str, task: str) -> list[dict]:
 # ---------------- Graph assembly: merge + cross-source dependency inference ----
 
 STOPWORDS = frozenset(
-    "the and for with from that this your you are was has have been will can may "
-    "not but any all who whom our their what when where which how why get got apply "
-    "application step steps must should need needs required require requires online "
-    "portal site page form forms office visit procedure process following follow "
-    "please ensure ensure's onto into over under before after during within via".split())
+    ["the", "and", "for", "with", "from", "that", "this", "your", "you", "are", "was", "has", "have", "been", "will", "can", "may", "not", "but", "any", "all", "who", "whom", "our", "their", "what", "when", "where", "which", "how", "why", "get", "got", "apply", "application", "step", "steps", "must", "should", "need", "needs", "required", "require", "requires", "online", "portal", "site", "page", "form", "forms", "office", "visit", "procedure", "process", "following", "follow", "please", "ensure", "ensure's", "onto", "into", "over", "under", "before", "after", "during", "within", "via"])
 
 PREREQ_HINTS = frozenset(
-    "document documents proof verify verification obtain gather eligibility "
-    "certificate registration register identity address proof".split())
+    ["document", "documents", "proof", "verify", "verification", "obtain", "gather", "eligibility", "certificate", "registration", "register", "identity", "address", "proof"])
 
 
 def _norm_title(title: str) -> str:
@@ -681,7 +676,7 @@ def merge_sources(per_source: list[tuple[str, list[dict]]]) -> tuple[list[dict],
         resolved_all.append((url, resolved))
     edges: list = []
     for url, ids in resolved_all:
-        for a, b in zip(ids, ids[1:]):
+        for a, b in pairwise(ids):
             if a != b and [a, b] not in edges:
                 edges.append([a, b])
                 edge_sources[_edge_key(a, b)] = url
@@ -713,10 +708,10 @@ def cross_source_edges(nodes: list[dict], edges: list, edge_sources: dict) -> No
             shared = src_toks & ctoks
             if not shared:
                 continue
-            if len(shared) >= 2 or max(len(t) for t in shared) >= 5:
+            if (len(shared) >= 2 or max(len(t) for t in shared) >= 5) and (
+                    nodes.index(src) < c_index or src["type"] == "prereq"):
                 # direction: prerequisite earlier in assembly order
-                if nodes.index(src) < c_index or src["type"] == "prereq":
-                    candidates.append((src["id"], consumer["id"], src["url"]))
+                candidates.append((src["id"], consumer["id"], src["url"]))
     # dedupe keeping first provenance
     seen = set()
     fresh = []
@@ -794,10 +789,10 @@ def llm_infer_edges(task: str, nodes: list[dict]) -> list[list[str]]:
              error=e)
         return []
     try:
-        m = re.search(r"\[.*\]", raw, re.S)
+        m = re.search(r"\[.*\]", raw, re.DOTALL)
         pairs = json.loads(m.group(0)) if m else []
         if not isinstance(pairs, list):
-            raise ValueError("reply was not a JSON array")
+            raise TypeError("reply was not a JSON array")
         return pairs
     except Exception as e:
         warn("edges", "unparseable edge reply", error=e, raw=raw[:200])

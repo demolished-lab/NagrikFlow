@@ -1,0 +1,43 @@
+# Lint gate for the civic backend.
+#
+# Rule-set stability: CI installs a pinned ruff (see the ruff step in
+# .github/workflows/ci.yml) so defaults never drift silently between runs.
+# Config discovery is anchored here (backend/ruff.toml), which also keeps
+# results identical whether `ruff check backend/app backend/tests` runs from
+# the repo root (CI) or from backend/ locally.
+
+[lint.flake8-bugbear]
+# FastAPI dependency defaults (File/Query/Depends/...) are evaluated once at
+# import time by FastAPI itself — B008's "function call in default" warning
+# does not apply to these idioms.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.Body",
+    "fastapi.Security",
+    "fastapi.UploadFile",
+]
+
+[lint]
+# Deferred rules — counted in PENDING.md ("Lint gate") and planned as a
+# phased backlog rather than one risky mega-change:
+#   BLE001 (103) blind-except        — defensive scraping code by design;
+#                                      narrow incrementally per module.
+#   S110   (11)  try-except-pass     — same backlog as BLE001.
+#   PLW1510 (21) subprocess no-check — call sites inspect returncode manually
+#                                      (agent/hermes tools, backup); make
+#                                      `check=` explicit per site.
+#   DTZ005/006 (7) naive datetimes   — needs a tz-consistency audit first
+#                                      (mixing naive/aware raises at runtime).
+ignore = [
+    "BLE001",
+    "S110",
+    "PLW1510",
+    "DTZ005",
+    "DTZ006",
+]

@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-_tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+_tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)  # noqa: SIM115 - sqlite needs the path after close
 _tmp.close()
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_tmp.name}")  # CI may preset Postgres
 os.environ["ALLOW_DEV_SECRET"] = "1"
@@ -13,11 +13,11 @@ os.environ["LINK_PROBE"] = "0"  # tests must never hit the network
 os.environ["JOB_POLLER"] = "0"  # no background dispatch racing test job rows
 os.environ["RECOVER_JOBS"] = "0"  # recovery also dispatches — off for tests
 
-import pytest  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
+import pytest
+from fastapi.testclient import TestClient
 
-import app.main as M  # noqa: E402
-from app import security as S  # noqa: E402
+import app.main as M
+from app import security as S
 
 _counter = [0]
 
@@ -29,7 +29,6 @@ def _unique(prefix: str) -> str:
 
 @pytest.fixture()
 def client():
-    from app import security as S
     S.reset_store()
     with TestClient(M.app, raise_server_exceptions=False) as c:
         yield c

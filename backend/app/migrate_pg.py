@@ -3,8 +3,7 @@
 SQLite handles these automatically; Postgres needs explicit support.
 Also creates a pg_trgm extension for text search on task titles.
 """
-from sqlmodel import SQLModel, create_engine, text
-from datetime import datetime, timezone
+from sqlmodel import text
 
 
 def m005_postgres(engine):
@@ -60,7 +59,9 @@ if __name__ == "__main__":
     # Applies the full versioned migration set for DATABASE_URL; on Postgres
     # that includes m005_postgres above (SQLite DBs run the base migrations).
     import os as _os
+
     from sqlmodel import create_engine as _create_engine
+
     from app.migrate import migrate as _migrate
 
     _url = _os.environ.get("DATABASE_URL", "sqlite:///./civic.db")

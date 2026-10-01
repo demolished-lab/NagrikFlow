@@ -4,19 +4,16 @@ Used for parallel workstreams (e.g., fix bugs AND add feature simultaneously).
 Each sub-agent gets its own budget and runs independently.
 Results are collected and reported together.
 """
-import asyncio
 import json
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Callable, Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session
 
-from .models import Job as JobModel
-from .audit import append as audit_append
 from .agent import run_agent
-
+from .audit import append as audit_append
+from .models import Job as JobModel
 
 _SUB_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="sub-agent")
 
@@ -26,7 +23,7 @@ def spawn_subagent(
     parent_job_id: int,
     task: str,
     budget: int = 10,
-    callback: Optional[Callable[[dict], None]] = None,
+    callback: Callable[[dict], None] | None = None,
 ) -> int:
     """Spawn a sub-agent task. Returns sub-job ID for polling."""
     from .models import Job

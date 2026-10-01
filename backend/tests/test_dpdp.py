@@ -1,5 +1,4 @@
 """DPDP Act (India, 2023) compliance: withdraw/consent export, erasure, grievances."""
-import json
 
 
 def _user_vault(s, models, uid, kinds):

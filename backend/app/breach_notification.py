@@ -5,7 +5,6 @@ Mandatory within 72 hours of discovery per Indian regulations.
 """
 
 from datetime import datetime, timedelta
-from typing import Optional
 
 
 def classify_breach(severity: str, affected_users: int, data_types: list[str]) -> dict:
@@ -185,7 +184,7 @@ def notify_stakeholders(classification: dict, contact_info: dict) -> dict:
     if classification["requires_notification"]:
         # In production, these would send actual emails/SMS
         # For now, log the requirement
-        print(f"[BREACH NOTIFY] Board notification REQUIRED")
+        print("[BREACH NOTIFY] Board notification REQUIRED")
         if classification["notify_board"]:
             notifications["board_notification_sent"] = True
         if classification["notify_media"]:

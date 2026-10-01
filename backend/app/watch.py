@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 from sqlmodel import Session, select
 
 from . import worker as workermod
-from .obs import warn
 from .models import Progress, TaskMap, User
+from .obs import warn
 
 
 def _norm(text: str) -> str:

@@ -6,13 +6,12 @@ schema_version table. Runs at startup, in order. SQLite + Postgres compatible
 """
 import os
 from datetime import datetime, timezone
-from typing import Optional
 
-from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlmodel import Field, Session, SQLModel, select
 
 
 class SchemaVersion(SQLModel, table=True):
-    version: Optional[int] = Field(default=None, primary_key=True)
+    version: int | None = Field(default=None, primary_key=True)
 
 
 def _ensure_columns(engine):
@@ -70,10 +69,10 @@ def _ensure_columns(engine):
     # notification per (user, reference). Endpoints also catch IntegrityError
     # so pre-existing duplicate data can't make them 500.
     for q in (
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_progress_user_map_step "
-        "ON progress (user_id, map_slug, step_id)",
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_user_ref "
-        "ON notification (user_id, reference)",
+        ("CREATE UNIQUE INDEX IF NOT EXISTS uq_progress_user_map_step "
+         "ON progress (user_id, map_slug, step_id)"),
+        ("CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_user_ref "
+         "ON notification (user_id, reference)"),
     ):
         try:
             with engine.begin() as conn:
@@ -96,6 +95,7 @@ def _seed_graph_hash(graph_json: str) -> str:
 def m002_seed_udyam(engine):
     import json
     from pathlib import Path
+
     from app.models import TaskMap
     seed = Path(__file__).resolve().parent.parent / "data" / "udyam_seed.json"
     with Session(engine) as s:
@@ -164,7 +164,7 @@ _DB_URL = os.environ.get("DATABASE_URL", "sqlite:///./civic.db")
 
 def _try_add_pg_migrations(migrations_list):
     """Add pg_trgm/index migrations only when DATABASE_URL points to Postgres."""
-    if not (_DB_URL.startswith("postgresql://") or _DB_URL.startswith("postgresql+psycopg://")):
+    if not _DB_URL.startswith(("postgresql://", "postgresql+psycopg://")):
         return
     try:
         from . import migrate_pg as mpg_mod

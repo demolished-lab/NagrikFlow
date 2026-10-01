@@ -10,7 +10,6 @@ Usage in main.py:
 """
 import os
 
-
 _TELEGRAM_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
 
 

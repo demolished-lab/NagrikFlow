@@ -5,15 +5,11 @@ Tools are callable by the LLM reasoning loop AND via REST endpoints
 can invoke them too.
 """
 import ast
-import importlib
-import json
 import os
 import re
 import subprocess
 import sys
-import traceback
 from pathlib import Path
-from typing import Any, Optional
 
 BASE = Path(__file__).resolve().parent.parent
 PYTHON = os.path.join(sys.prefix, "Scripts", "python.exe") if sys.platform == "win32" else "python3"
@@ -103,7 +99,7 @@ def patch_file(path: str, old_string: str, new_string: str, replace_all: bool = 
 
 @_tool
 def search_files(pattern: str, path: str = ".", target: str = "content",
-                 file_glob: Optional[str] = None, limit: int = 30) -> dict:
+                 file_glob: str | None = None, limit: int = 30) -> dict:
     """Search file contents or find files by glob (uses ripgrep if available)."""
     p = BASE / path.lstrip("/")
     try:
@@ -134,8 +130,8 @@ def search_files(pattern: str, path: str = ".", target: str = "content",
 # ---- run-cmd ---------------------------------------------------------------
 
 @_tool
-def run_cmd(command: str, cwd: Optional[str] = None,
-            timeout: int = 120, env_extra: Optional[dict] = None) -> dict:
+def run_cmd(command: str, cwd: str | None = None,
+            timeout: int = 120, env_extra: dict | None = None) -> dict:
     """Run a shell command and return stdout/stderr/exit_code."""
     c = cwd or str(BASE)
     full_env = {**os.environ}

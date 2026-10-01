@@ -6,9 +6,9 @@ Provides:
 - llm_available(): Boolean check for any working LLM backend
 """
 import os
-import httpx
 from datetime import datetime, timezone
 
+import httpx
 
 BYNARA_API_KEY = os.environ.get("BYNARA_API_KEY", "").strip()
 BYNARA_BASE_URL = os.environ.get("BYNARA_BASE_URL", "https://router.bynara.id/v1")

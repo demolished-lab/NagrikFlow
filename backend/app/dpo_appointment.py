@@ -4,8 +4,7 @@ This document formally appoints the DPO as required under India's DPDP Act 2023.
 Replace bracketed values with actual information before signing.
 """
 
-from datetime import date, datetime
-from typing import Optional
+from datetime import date
 
 
 def generate_dpo_appointment(
@@ -98,9 +97,9 @@ IN WITNESS WHEREOF, the parties have executed this Appointment Letter on the dat
 
 ___________________________
 [Authorized Signatory]
-{Name}
-{Title}
-{Organization}
+[Name]
+[Title]
+{organization_name}
 
 Acknowledged and Accepted:
 

@@ -7,7 +7,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
-      - run: pip install -r backend/requirements.txt pytest httpx fakeredis
+      - run: pip install -r backend/requirements.txt pytest httpx fakeredis ruff==0.16.9
+      - run: ruff check backend/app backend/tests
       - run: python -m pytest backend/tests/ -q
         env: { ALLOW_DEV_SECRET: "1" }
   backend-pg:

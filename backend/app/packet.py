@@ -183,7 +183,7 @@ def render_markdown(p: dict) -> str:
             lines.append(f"  - guide: {g.get('title') or 'document'} "
                          f"<{g.get('url')}>")
     lines += ["",
-              f"_Generated {p['generated_at']} from official sources — "
-              "always confirm on the portal before paying or submitting._",
+              (f"_Generated {p['generated_at']} from official sources — "
+               "always confirm on the portal before paying or submitting._"),
               ""]
     return "\n".join(lines)
