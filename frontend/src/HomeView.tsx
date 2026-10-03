@@ -56,6 +56,8 @@ export default function HomeView({ profile, onNavigate }: Props) {
   const [pathwaysLoading, setPathwaysLoading] = useState(true);
   const [pathwaysError, setPathwaysError] = useState('');
   const [build, setBuild] = useState<BuildState>({ status: 'idle', slug: '', task: '' });
+  const [buildStartedAt, setBuildStartedAt] = useState<number | null>(null);
+  const [buildTick, setBuildTick] = useState(0);
   const pollRef = useRef<number | null>(null);
   const checkingRef = useRef(false);
   const taskInputRef = useRef<HTMLInputElement>(null);
@@ -116,11 +118,20 @@ export default function HomeView({ profile, onNavigate }: Props) {
     };
   }, [loadPathways]);
 
+  useEffect(() => {
+    const busy = build.status === 'discovering' || build.status === 'building' || build.status === 'timeout';
+    if (!busy) return;
+    const timer = window.setInterval(() => setBuildTick((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [build.status]);
+
   const beginBuild = async (event: React.FormEvent) => {
     event.preventDefault();
     const cleanTask = task.trim();
     if (!cleanTask || build.status === 'discovering' || build.status === 'building') return;
     if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    setBuildStartedAt(Date.now());
+    setBuildTick(0);
     setBuild({ status: 'discovering', slug: '', task: cleanTask });
     try {
       const response = await api.buildTask(cleanTask, city.trim(), state.trim(), serviceType);
@@ -137,10 +148,12 @@ export default function HomeView({ profile, onNavigate }: Props) {
           const job = await api.jobStatus(jobId);
           if (job.status === 'failed') {
             if (pollRef.current !== null) window.clearInterval(pollRef.current);
+            setBuildStartedAt(null);
             setBuild({ status: 'failed', slug, task: cleanTask, jobId, error: job.result?.error || 'The pathway could not be built. Please try again.' });
             void loadPathways();
           } else if (job.status === 'done') {
             if (pollRef.current !== null) window.clearInterval(pollRef.current);
+            setBuildStartedAt(null);
             const resultSlug = String(job.result?.slug || slug);
             let map: any = null;
             try { map = await api.taskMap(resultSlug); } catch { /* the job row still records the completed build */ }
@@ -180,6 +193,16 @@ export default function HomeView({ profile, onNavigate }: Props) {
   const focusedSources = focusedPathway?.sources || [];
   const isBusy = build.status === 'discovering' || build.status === 'building';
   const location = [city.trim(), state.trim()].filter(Boolean).join(', ');
+  const elapsedSeconds = buildStartedAt ? Math.max(0, Math.floor((Date.now() - buildStartedAt) / 1000)) : 0;
+  const activityStage = build.status === 'discovering' ? 1 : build.status === 'building' ? (elapsedSeconds > 24 ? 3 : 2) : build.status === 'timeout' ? 4 : 0;
+  const activityStages = [
+    { label: 'Task received', detail: 'Reading your request and location', icon: '✓' },
+    { label: 'Finding official sources', detail: 'Checking government websites and service portals', icon: '⌕' },
+    { label: 'Cross-checking requirements', detail: 'Comparing documents, fees and eligibility', icon: '↗' },
+    { label: 'Building your roadmap', detail: 'Ordering steps and connecting dependencies', icon: '◌' },
+    { label: 'Saving your pathway', detail: 'Preparing a clear view with source links', icon: '□' },
+  ];
+  void buildTick;
 
   return <div className="cv-home-view cv-anim-up">
     <div className="cv-concierge-grid">
@@ -204,6 +227,15 @@ export default function HomeView({ profile, onNavigate }: Props) {
         </form>
 
         {isBusy && <div className="cv-build-status" role="status" aria-live="polite"><span className="cv-status-spinner" /><span><strong>{build.status === 'discovering' ? 'Finding official sources…' : 'Putting your pathway together…'}</strong><small>This may take a little while. You can keep this page open.</small></span></div>}
+        {(isBusy || build.status === 'timeout') && <section className="cv-activity-card" aria-label="Live pathway activity" aria-live="polite">
+          <div className="cv-activity-heading"><div><span className="cv-eyebrow">LIVE PATHWAY ACTIVITY</span><h2>Here’s what’s happening in the background</h2><p>We’ll keep checking until your source-backed pathway is ready.</p></div><span className="cv-activity-timer">{elapsedSeconds}s</span></div>
+          <ol className="cv-activity-timeline">{activityStages.map((stage, index) => {
+            const done = index < activityStage;
+            const active = index === activityStage;
+            return <li key={stage.label} className={`${done ? 'is-done' : ''} ${active ? 'is-active' : ''}`}><span className="cv-activity-marker">{done ? '✓' : active ? <span className="cv-activity-pulse">{stage.icon}</span> : index + 1}</span><span className="cv-activity-copy"><strong>{stage.label}</strong><small>{stage.detail}</small></span>{active && <span className="cv-activity-state">In progress</span>}{done && <span className="cv-activity-state is-complete">Complete</span>}</li>;
+          })}</ol>
+          {build.status === 'timeout' && <p className="cv-activity-note">This is taking longer than usual, but the job is still being checked. You can open My pathways without losing this work.</p>}
+        </section>}
         {build.status === 'failed' && <div className="cv-build-alert is-error" role="alert"><strong>We couldn’t build that pathway.</strong><span>{build.error}</span><button type="button" onClick={() => setBuild({ status: 'idle', slug: '', task: '' })}>Try again</button></div>}
         {build.status === 'timeout' && <div className="cv-build-alert is-info" role="status"><strong>Still working</strong><span>{build.error}</span><button type="button" onClick={() => onNavigate('pathways')}>Open My pathways</button></div>}
         {(build.status === 'verified' || build.status === 'review_required') && <div className={`cv-build-alert ${build.status === 'verified' ? 'is-success' : 'is-info'}`} role="status">

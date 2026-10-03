@@ -1,0 +1,11 @@
+{
+  "routes": [
+    { "path": "/", "title": "Civic Path Navigator" },
+    { "path": "/#/pathways", "title": "My pathways" },
+    { "path": "/#/documents", "title": "Documents and progress" },
+    { "path": "/#/help", "title": "Help centre" },
+    { "path": "/#/roadmap/:slug", "title": "Civic pathway roadmap" },
+    { "path": "/#/agent", "title": "Research workspace" },
+    { "path": "/#/admin", "title": "Pathway verification desk" }
+  ]
+}

@@ -310,3 +310,33 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Live background activity: make long-running civic research legible, calm and honest. */
+.cv-activity-card { margin-top: 12px; padding: 16px 18px 14px; border: 1px solid #cfe0eb; border-radius: 12px; background: linear-gradient(145deg, #f8fcff 0%, #eef7ff 100%); box-shadow: 0 8px 26px rgba(24, 64, 104, .07); animation: cv-fade-up .35s var(--ease-out) both; }
+.cv-activity-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.cv-activity-heading h2 { margin: 4px 0 4px; color: #12366b; font-size: 16px; line-height: 1.25; }
+.cv-activity-heading p { margin: 0; color: #58728f; font-size: 11px; line-height: 1.45; }
+.cv-activity-timer { min-width: 45px; padding: 6px 8px; border: 1px solid #bdd4e8; border-radius: 999px; color: #075db5; background: #fff; font: 800 11px var(--font-mono); text-align: center; }
+.cv-activity-timeline { display: grid; gap: 0; margin: 17px 0 0; padding: 0; list-style: none; }
+.cv-activity-timeline li { position: relative; display: grid; grid-template-columns: 27px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 42px; color: #8ca0b3; }
+.cv-activity-timeline li:not(:last-child)::after { content: ''; position: absolute; left: 12px; top: 30px; width: 2px; height: 22px; background: #d8e4ee; }
+.cv-activity-timeline li.is-done { color: #087b5b; }
+.cv-activity-timeline li.is-done::after { background: #95d6bc; }
+.cv-activity-timeline li.is-active { color: #075db5; }
+.cv-activity-marker { position: relative; z-index: 1; width: 25px; height: 25px; display: grid; place-items: center; border: 1px solid #d2dfe9; border-radius: 50%; background: #fff; color: #7790a7; font-size: 11px; font-weight: 800; }
+.cv-activity-timeline li.is-done .cv-activity-marker { border-color: #98d9be; background: #dff8ed; color: #087b5b; }
+.cv-activity-timeline li.is-active .cv-activity-marker { border-color: #6bb1e4; background: #e3f2ff; color: #075db5; box-shadow: 0 0 0 4px rgba(79, 158, 216, .12); }
+.cv-activity-pulse { animation: cv-activity-pulse 1.25s ease-in-out infinite; }
+.cv-activity-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.cv-activity-copy strong { color: #29496d; font-size: 11px; }
+.cv-activity-timeline li.is-active .cv-activity-copy strong { color: #075db5; }
+.cv-activity-copy small { overflow: hidden; color: #6f879e; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.cv-activity-state { color: #2779b8; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.cv-activity-state.is-complete { color: #16845f; }
+.cv-activity-note { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #d7e6f1; color: #58728f; font-size: 10px; line-height: 1.45; }
+@keyframes cv-activity-pulse { 0%, 100% { transform: scale(1); opacity: .75; } 50% { transform: scale(1.18); opacity: 1; } }
+@media (max-width: 560px) {
+  .cv-activity-card { padding: 14px; }
+  .cv-activity-heading h2 { font-size: 14px; }
+  .cv-activity-state { display: none; }
+}
