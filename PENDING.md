@@ -253,6 +253,13 @@ Full re-audit verdict was "not production-ready"; every listed blocker fixed:
   (429), so the gemini lane currently falls through to OpenRouter (which
   works). Other tools may rely on the prefixed value — change only if the
   prefix isn't needed elsewhere.
+- [x] **Live browser audit ran in this checkout (2026-10-04)** — local
+  backend (`/healthz` + `/readyz` ok) + `LIVE_E2E=1` → **passed, zero
+  console errors / 5xx / failed requests**; real build took 8 m 18 s so the
+  spec's terminal-state wait went 480 s → 720 s, source-warning assertions
+  made conditional (deterministic coverage moved to the mocked suite).
+  Remaining for release: deploy with real `VITE_API_URL`/CORS/secrets/
+  Postgres, then re-run the live audit against that staging origin.
 - Verified: **pytest 157/157**, `ruff check` 0 errors, live lane proof:
   bynara answered, and with bynara bypassed openrouter `qwen3.8-27b:free`
   returned OK.

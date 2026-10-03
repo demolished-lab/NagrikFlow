@@ -8,7 +8,9 @@ const benign = /favicon|__vite_ping|WebSocket|HMR|React DevTools|ERR_ABORTED|web
 
 test('live end-to-end UI audit: real backend, zero errors', async ({ page }, testInfo) => {
   test.skip(process.env.LIVE_E2E !== '1', 'Set LIVE_E2E=1 with a local backend to run this live audit.');
-  test.setTimeout(600_000);
+  // Real 5-source CDX builds measured at ~8.3 min wall time (job 16: 8m18s),
+  // so the terminal-state wait needs real margin over that.
+  test.setTimeout(900_000);
   const shotDir = testInfo.outputPath();
   await mkdir(shotDir, { recursive: true });
   const hard: string[] = [];
@@ -51,7 +53,7 @@ test('live end-to-end UI audit: real backend, zero errors', async ({ page }, tes
   await page.getByRole('button', { name: /Build my pathway/ }).click();
   await expect(page.locator('.cv-build-status')).toBeVisible({ timeout: 15_000 });
   const doneState = page.getByText(/awaiting source review|Your reviewed pathway is ready|We couldn.t build/);
-  await expect(doneState).toBeVisible({ timeout: 480_000 });
+  await expect(doneState).toBeVisible({ timeout: 720_000 });
   await page.screenshot({ path: `${shotDir}/02-build-done.png`, fullPage: true });
 
   // 3. pathways list
@@ -59,18 +61,24 @@ test('live end-to-end UI audit: real backend, zero errors', async ({ page }, tes
   await expect(page.getByRole('heading', { name: 'My pathways' })).toBeVisible();
   await page.screenshot({ path: `${shotDir}/03-pathways.png`, fullPage: true });
 
-  // 4. roadmap draft: warnings banner must be visible to the citizen
+  // 4. roadmap draft: the review banner is structural for unverified maps;
+  //    source warnings appear only when a source degraded (5/5 OK on a
+  //    healthy network) — log them for review instead of hard-asserting.
   await page.getByRole('button', { name: 'Open pathway' }).first().click();
   await expect(page.getByText('DRAFT PATHWAY')).toBeVisible({ timeout: 30_000 });
   await expect(
-    page.getByText('Some sources for this pathway need your attention.'),
+    page.getByText('This pathway is awaiting source review.'),
   ).toBeVisible({ timeout: 30_000 });
-  await page.screenshot({ path: `${shotDir}/04-roadmap-warnings.png`, fullPage: true });
+  const roadWarn = page.getByText('Some sources for this pathway need your attention.');
+  if (await roadWarn.count()) console.log('ROADMAP_WARNINGS=' + await roadWarn.innerText());
+  await page.screenshot({ path: `${shotDir}/04-roadmap-draft.png`, fullPage: true });
 
-  // 5. packet: source warnings must surface here too
+  // 5. packet must render from the real backend; warnings conditional as above
   await page.getByRole('button', { name: 'Load packet' }).click();
-  await expect(page.getByText('Source warnings for this packet.')).toBeVisible({ timeout: 60_000 });
-  await page.screenshot({ path: `${shotDir}/05-packet-warnings.png`, fullPage: true });
+  await expect(page.locator('.cv-packet-body')).toBeVisible({ timeout: 60_000 });
+  const packetWarn = page.getByText('Source warnings for this packet.');
+  if (await packetWarn.count()) console.log('PACKET_WARNINGS=' + await packetWarn.innerText());
+  await page.screenshot({ path: `${shotDir}/05-packet.png`, fullPage: true });
 
   // 6. documents + help surfaces
   await page.goto('/#/documents');

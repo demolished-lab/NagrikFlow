@@ -235,10 +235,21 @@ test('task build result is reflected from the saved API pathway and review statu
     await route.fulfill({ json: { status: 'done', result: { slug: 'new-water-connection' } } });
   });
   await page.route('**/api/task/new-water-connection', async (route) => {
-    await route.fulfill({ json: { slug: 'new-water-connection', title: 'Get a water connection', city: 'Pune', state: 'Maharashtra', graph: { nodes, edges }, sources: ['https://example.gov.in'], verified: false } });
+    await route.fulfill({ json: { slug: 'new-water-connection', title: 'Get a water connection', city: 'Pune', state: 'Maharashtra', graph: { nodes, edges }, sources: ['https://example.gov.in'], verified: false, warnings: ['example.gov.in could not be fetched: HTTP 403 Forbidden'] } });
   });
   await page.route('**/api/maps/new-water-connection*', async (route) => {
-    await route.fulfill({ json: { slug: 'new-water-connection', title: 'Get a water connection', city: 'Pune', state: 'Maharashtra', graph: { nodes, edges }, filters: { types: ['action', 'prereq'], statuses: ['action', 'ready'], total: nodes.length }, sources: ['https://example.gov.in'], verified: false } });
+    await route.fulfill({ json: { slug: 'new-water-connection', title: 'Get a water connection', city: 'Pune', state: 'Maharashtra', graph: { nodes, edges }, filters: { types: ['action', 'prereq'], statuses: ['action', 'ready'], total: nodes.length }, sources: ['https://example.gov.in'], verified: false, warnings: ['example.gov.in could not be fetched: HTTP 403 Forbidden'] } });
+  });
+  await page.route('**/api/task/new-water-connection/packet', async (route) => {
+    await route.fulfill({ json: {
+      slug: 'new-water-connection', title: 'Get a water connection',
+      generated_at: '2026-10-04T10:00:00Z',
+      steps: [{ order: 1, id: 'apply', title: 'Apply', detail: 'Apply online.', prereqs: [] }],
+      checklist: ['Aadhaar'], fees: [], guides: [],
+      sources: [{ url: 'https://example.gov.in', ok: false, error: 'HTTP 403 Forbidden' }],
+      apply_links: [], warnings: ['example.gov.in could not be fetched: HTTP 403 Forbidden'],
+      counts: { steps: 1, documents: 1, sources: 0, guides: 0 },
+    } });
   });
   await page.route('**/api/me/progress/new-water-connection', async (route) => {
     await route.fulfill({ json: { steps: [] } });
@@ -257,4 +268,8 @@ test('task build result is reflected from the saved API pathway and review statu
   await page.getByRole('button', { name: 'Preview pathway' }).click();
   await expect(page.getByText('DRAFT PATHWAY')).toBeVisible();
   await expect(page.getByText('This pathway is awaiting source review.')).toBeVisible();
+  // degraded-source warnings surface on both the roadmap and its packet
+  await expect(page.getByText('Some sources for this pathway need your attention.')).toBeVisible();
+  await page.getByRole('button', { name: 'Load packet' }).click();
+  await expect(page.getByText('Source warnings for this packet.')).toBeVisible();
 });
