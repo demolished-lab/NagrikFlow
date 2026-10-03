@@ -131,39 +131,37 @@ export function ProgressBar({ percent }: { percent: number }) {
 
 export function Skyline({ height = 120 }: { height?: number }) {
   return <div className="nf-skyline" aria-hidden="true"><svg viewBox="0 0 700 120" style={{ width: '100%', height, display: 'block' }}>
-    <g fill="none" stroke="#b9c6e2" strokeWidth="2">
+    <g fill="none" stroke="#9db4dd" strokeWidth="2">
       <path d="M20 110 V60 h18 v-12 h12 v12 h14 v50" />
       <path d="M96 110 V48 q10 -14 22 0 v62" />
       <rect x="132" y="66" width="26" height="44" />
-      <path d="M172 110 V40 h10 v-10 h14 v10 h10 v70" />
-      <path d="M220 110 V70 h34 V40 h8 v-14 h6 v14 h8 v30 h34 v40" />
-      <path d="M330 110 V58 h16 v-8 h12 v8 h14 v52" />
-      <path d="M396 110 V30 q12 -16 24 0 v80" />
-      <rect x="434" y="64" width="24" height="46" />
-      <path d="M472 110 V52 h12 v-12 h10 v12 h12 v58" />
-      <path d="M530 110 V66 q14 -10 28 0 v44" />
-      <rect x="572" y="58" width="30" height="52" />
-      <path d="M616 110 V44 h34 v66" />
+      {/* heritage dome block */}
+      <path d="M172 110 V62 h8 v-8 h30 v8 h8 v48" />
+      <path d="M182 54 q13 -26 26 0" />
+      <rect x="193" y="22" width="4" height="12" />
+      {/* clock tower */}
+      <rect x="232" y="44" width="14" height="66" />
+      <path d="M230 44 L239 26 L248 44" />
+      <circle cx="239" cy="56" r="4" />
+      <path d="M260 110 V70 h34 V40 h8 v-14 h6 v14 h8 v30 h34 v40" />
+      <path d="M370 110 V58 h16 v-8 h12 v8 h14 v52" />
+      <path d="M436 110 V30 q12 -16 24 0 v80" />
+      {/* twin towers with antennae */}
+      <rect x="474" y="52" width="24" height="58" />
+      <rect x="504" y="52" width="24" height="58" />
+      <path d="M486 52 V34 M516 52 V30" />
+      <path d="M542 110 V66 q14 -10 28 0 v44" />
+      <rect x="584" y="58" width="30" height="52" />
+      <path d="M628 110 V44 h34 v66" />
       <path d="M8 110 H692" />
+    </g>
+    <g stroke="#9db4dd" strokeWidth="1.5" opacity="0.7">
+      <path d="M140 74 h10 M140 82 h10 M140 90 h10" />
+      <path d="M592 66 h14 M592 74 h14 M592 82 h14 M592 90 h14" />
+      <path d="M636 52 h18 M636 62 h18 M636 72 h18" />
     </g>
     <g fill="#cfe0d8">
       <ellipse cx="120" cy="108" rx="26" ry="8" /><ellipse cx="300" cy="108" rx="30" ry="8" /><ellipse cx="480" cy="108" rx="28" ry="8" /><ellipse cx="640" cy="108" rx="26" ry="8" />
-    </g>
-  </svg></div>;
-}
-
-export function HeroSkyline() {
-  return <div className="nf-hero-bg" aria-hidden="true"><svg viewBox="0 0 800 300" preserveAspectRatio="xMidYMax slice">
-    <rect width="800" height="300" fill="none" />
-    <g fill="#ffffff" opacity="0.16">
-      <rect x="40" y="150" width="60" height="150" /><rect x="120" y="110" width="44" height="190" />
-      <rect x="185" y="170" width="70" height="130" /><rect x="275" y="90" width="52" height="210" />
-      <rect x="350" y="140" width="66" height="160" /><rect x="436" y="60" width="48" height="240" />
-      <rect x="505" y="130" width="72" height="170" /><rect x="598" y="100" width="50" height="200" />
-      <rect x="668" y="150" width="62" height="150" />
-    </g>
-    <g fill="#ffd98a" opacity="0.5">
-      {Array.from({ length: 40 }).map((_, i) => <rect key={i} x={45 + (i * 53) % 700} y={120 + (i * 37) % 150} width="7" height="9" />)}
     </g>
   </svg></div>;
 }

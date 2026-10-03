@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { SERVICE_TYPES } from './types';
-import { TopNav, Footer, HeroSkyline, Skyline, POPULAR_SERVICES, type NavTab } from './nf-kit';
+import { TopNav, Footer, Skyline, POPULAR_SERVICES, type NavTab } from './nf-kit';
+import { HeroCityscape } from './nf-art';
 
 interface LandingProps {
   onLogin: () => void;
@@ -65,7 +66,7 @@ export default function LandingPage({ onLogin, onRegister, onNavigate }: Landing
     <main className="nf-main nf-main-wide" id="main-content">
       {/* Panel 1 — hero */}
       <section className="nf-hero" aria-label="Welcome to NagrikFlow">
-        <HeroSkyline />
+        <HeroCityscape />
         <div className="nf-hero-inner">
           <h1>Your Guide to Government Services</h1>
           <p className="nf-hero-sub">From complex procedures to clear next steps.</p>
