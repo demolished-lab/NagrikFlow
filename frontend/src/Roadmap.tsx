@@ -59,6 +59,13 @@ function sourceName(source: CivicSource): string {
   catch { return url || 'Government source'; }
 }
 
+function nodeColor(status: Status): string {
+  if (status === 'verified') return '#2f9e6e';
+  if (status === 'action') return '#dd8a0b';
+  if (status === 'unlocked') return '#7a5af8';
+  return '#2f7fe0';
+}
+
 function CivicNode({ data }: { data: { title: string; status: Status; index: number; onSelect: () => void } }) {
   const cfg = STATUS_CONFIG[data.status];
   return <div className={`cv-flow-node cv-flow-node-${data.status}`} onClick={data.onSelect} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); data.onSelect(); } }}>
@@ -76,8 +83,10 @@ export default function Roadmap({ slug, onBack }: Props) {
   const [payload, setPayload] = useState<MapPayload | null>(null);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<GNode | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>({ node_type: '', status: '', q: '' });
   const [view, setView] = useState<'map' | 'list'>('list');
+  const [zoom, setZoom] = useState(1);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(true);
   const [packet, setPacket] = useState<Packet | null>(null);
@@ -88,6 +97,7 @@ export default function Roadmap({ slug, onBack }: Props) {
   useEffect(() => {
     setFilters({ node_type: '', status: '', q: '' });
     setSelected(null);
+    setDetailId(null);
     setPayload(null);
     setPacket(null);
     setPacketErr('');
@@ -173,9 +183,8 @@ export default function Roadmap({ slug, onBack }: Props) {
       id: node.id,
       type: 'civic',
       position: { x: 0, y: 0 },
-      data: { title: node.title, status: getStatus(node), index, onSelect: () => setSelected(node) },
+      data: { title: node.title, status: getStatus(node), index, onSelect: () => { setSelected(node); setDetailId(node.id); } },
     }));
-    // dagre layered layout (left→right follows step order); grid fallback
     try {
       const flow = new dagre.graphlib.Graph();
       flow.setDefaultEdgeLabel(() => ({}));
@@ -206,57 +215,205 @@ export default function Roadmap({ slug, onBack }: Props) {
   const updateFilter = (key: keyof Filters, value: string) => setFilters((previous) => ({ ...previous, [key]: value }));
   const resetFilters = () => setFilters({ node_type: '', status: '', q: '' });
 
-  if (loading && !payload) return <div className="cv-page-state" role="status">Loading your pathway…</div>;
-  if (!payload) return <div className="cv-page-state"><div className="cv-api-error" role="alert">{err || 'This pathway could not be loaded.'}</div><button className="cv-btn cv-btn-ghost" onClick={onBack}>← Back to My pathways</button><button className="cv-btn cv-btn-indigo" onClick={() => void loadMap()}>Try again</button></div>;
+  if (loading && !payload) return <div className="nf-card" style={{ padding: 24 }} role="status"><p className="nf-muted">Loading your pathway…</p></div>;
+  if (!payload) return <div className="nf-card" style={{ padding: 24 }}><div className="nf-error-box" role="alert">{err || 'This pathway could not be loaded.'}</div><div style={{ display: 'flex', gap: 8, marginTop: 12 }}><button className="nf-btn nf-btn-ghost nf-btn-sm" onClick={onBack}>← Back to My pathways</button><button className="nf-btn nf-btn-primary nf-btn-sm" onClick={() => void loadMap()}>Try again</button></div></div>;
 
   const location = [payload.city, payload.state].filter(Boolean).join(', ');
-  const context = [payload.service_type, location].filter(Boolean).join(' · ');
+  const total = payload.filters?.total ?? payload.graph.nodes.length;
+  const doneCount = payload.graph.nodes.filter((n) => completed.has(n.id)).length;
+  const percent = total ? Math.round((doneCount / total) * 100) : 0;
+  const firstSource = (payload.sources || []).map(sourceUrl).find(Boolean) || '';
+  const fees = Array.from(new Set(payload.graph.nodes.map((n) => n.fee).filter(Boolean)));
+  const nodes = payload.graph.nodes;
+  const detailIndex = detailId ? nodes.findIndex((n) => n.id === detailId) : -1;
+  const detailNode = detailIndex >= 0 ? nodes[detailIndex] : null;
+  const nextNode = detailNode ? nodes[detailIndex + 1] || null : null;
+  const docNodes = nodes.filter((n) => ['prereq', 'document'].includes((n.type || '').toLowerCase()));
 
-  return <div className="cv-path-view cv-roadmap-view cv-anim-up">
-    <section className="cv-roadmap-toolbar cv-roadmap-panel">
-      <button className="cv-back-link" onClick={onBack}>← My pathways</button>
-      <div className="cv-roadmap-toolbar-head">
-        <div><span className="cv-eyebrow">{payload.verified ? 'REVIEWED CIVIC PATHWAY' : 'DRAFT PATHWAY'}</span><h1>{payload.title || 'Your procedure path'}</h1><p>{context ? `${context} · ` : ''}{payload.filters?.total ?? payload.graph.nodes.length} steps</p></div>
-        <div className="cv-view-toggle" role="group" aria-label="Pathway display mode"><button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>☷ List</button><button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}>⌘ Map</button></div>
+  return <div>
+    <div className="nf-crumb"><button onClick={() => { window.location.hash = ''; }}>Home</button> · <b>{payload.title || 'Roadmap'}</b></div>
+    <div className="nf-road-head">
+      <div>
+        <span className="nf-eyebrow">{payload.verified ? 'REVIEWED CIVIC PATHWAY' : 'DRAFT PATHWAY'}</span>
+        <h1>{payload.title || 'Your procedure path'}</h1>
+        <p className="nf-loc">{location || 'Location not specified'}{payload.service_type ? ` · ${payload.service_type}` : ''} · MCGM</p>
       </div>
-      {!payload.verified && <div className="cv-review-banner" role="note"><span aria-hidden="true">i</span><p><strong>This pathway is awaiting source review.</strong> You can inspect its steps and official links; progress tracking will be available after an administrator approves it.</p></div>}
-      {!!payload.warnings?.length && <div className="cv-review-banner cv-source-warnings" role="note"><span aria-hidden="true">!</span><p><strong>Some sources for this pathway need your attention.</strong> {payload.warnings.join(' ')}</p></div>}
-      {payload.verified && <p className="cv-roadmap-progress-note">Your progress is saved to your account when you mark a step complete.</p>}
-      <div className="cv-filter-row"><label className="cv-filter-search"><span aria-hidden="true">⌕</span><input value={filters.q} onChange={(event) => updateFilter('q', event.target.value)} placeholder="Search steps, documents or fees" aria-label="Search pathway steps" /></label><select value={filters.node_type} onChange={(event) => updateFilter('node_type', event.target.value)} aria-label="Filter by step type"><option value="">All step types</option>{(payload.filters?.types || []).map((type) => <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>)}</select><select value={filters.status} onChange={(event) => updateFilter('status', event.target.value)} aria-label="Filter by status"><option value="">All statuses</option>{(payload.filters?.statuses || []).map((status) => <option key={status} value={status}>{STATUS_CONFIG[status as Status]?.badge || status}</option>)}</select><button className="cv-filter-reset" onClick={resetFilters}>Reset</button></div>
-      <div className="cv-filter-summary" aria-live="polite">{loading ? 'Refreshing steps…' : `${payload.graph.nodes.length} visible steps`}{(filters.q || filters.node_type || filters.status) && <span> · Filters are synced with the API</span>}</div>
-    </section>
+      <div className="nf-road-progress"><small>{percent}% Completed</small><div className="nf-progress-track" style={{ marginTop: 6 }}><span style={{ width: `${percent}%` }} /></div></div>
+    </div>
 
-    {err && <div className="cv-api-error" role="alert">{err}</div>}
+    {!payload.verified && <div className="nf-banner is-review" role="note"><span aria-hidden="true">ⓘ</span><p><strong>This pathway is awaiting source review.</strong> You can inspect its steps and official links; progress tracking will be available after an administrator approves it.</p></div>}
+    {!!payload.warnings?.length && <div className="nf-banner is-warn" role="note"><span aria-hidden="true">!</span><p><strong>Some sources for this pathway need your attention.</strong> {payload.warnings.join(' ')}</p></div>}
+    {payload.verified && <p className="nf-muted" style={{ fontSize: 13 }}>Your progress is saved to your account when you mark a step complete.</p>}
+    {err && <div className="nf-error-box" role="alert">{err}</div>}
 
-    {view === 'map' ? <section className="cv-interactive-map" aria-label="Interactive civic procedure map"><ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView minZoom={0.35} maxZoom={1.4}><MiniMap nodeColor={(node) => STATUS_CONFIG[(node.data?.status || 'ready') as Status]?.color || '#187b69'} /><Controls /><Background color="#dce8e3" gap={22} /></ReactFlow>{flowNodes.length === 0 && <div className="cv-map-empty">No steps match these filters. <button onClick={resetFilters}>Clear filters</button></div>}</section> : <section className="cv-path-timeline cv-filtered-list" aria-label="Pathway steps">{payload.graph.nodes.map((node, index) => { const status = getStatus(node); const cfg = STATUS_CONFIG[status]; return <article className="cv-filtered-step" key={node.id}><div className="cv-step-header"><span className="cv-step-badge" style={{ background: cfg.bg, color: cfg.color }}>{cfg.icon} {cfg.badge}</span><span className="cv-step-step">Step {index + 1}</span></div><h2 className="cv-step-title">{node.title}</h2><p>{node.detail || 'Step in this civic procedure.'}</p>{node.fee && <small>Fee: {node.fee}</small>}<div className="cv-filtered-step-actions">{node.link && node.link !== node.url && <a href={node.link} target="_blank" rel="noreferrer">Apply / open form ↗</a>}{node.url && <a href={node.url} target="_blank" rel="noreferrer">Official source ↗</a>}{payload.verified && status !== 'verified' && <button className="cv-btn cv-btn-sm cv-btn-ghost" onClick={() => void markDone(node)}>Mark complete</button>}</div></article>; })}{payload.graph.nodes.length === 0 && <div className="cv-map-empty">No steps match these filters. <button onClick={resetFilters}>Clear filters</button></div>}</section>}
-
-    <section className="cv-roadmap-panel" aria-label="Path workflow packet">
-      <div className="cv-sources-title-row">
-        <div><span className="cv-eyebrow">PATH WORKFLOW PACKET</span><h2>Your packet: steps, checklist, guides</h2></div>
-      </div>
-      {!packet && !packetBusy && <p className="cv-muted">One bundle with the ordered steps, your document checklist, official guide links, and every source (with the real redirect target we verified) — downloadable as Markdown or sent to your Telegram.</p>}
-      {!packet && !packetBusy && <button className="cv-btn cv-btn-indigo" onClick={() => void loadPacket()}>Load packet</button>}
-      {packetBusy && <p role="status">Building your packet from the fetched sources…</p>}
-      {packetErr && <div className="cv-api-error" role="alert">{packetErr}</div>}
-      {packet && <div className="cv-packet-body">
-        {!!packet.warnings?.length && <div className="cv-review-banner cv-source-warnings" role="note"><span aria-hidden="true">!</span><p><strong>Source warnings for this packet.</strong> {packet.warnings.join(' ')}</p></div>}
-        <p className="cv-muted">{packet.counts.steps} steps · {packet.counts.documents} documents · {packet.counts.sources} sources · {packet.counts.guides} guides · generated {new Date(packet.generated_at).toLocaleString()}</p>
-        {packet.checklist.length > 0 && <div><h3>Document checklist</h3><ul>{packet.checklist.map((doc) => <li key={doc}>{doc}</li>)}</ul></div>}
-        {packet.guides.length > 0 && <div><h3>Official guides</h3><ul>{packet.guides.map((guide) => <li key={guide.url}><a href={guide.url} target="_blank" rel="noreferrer">{guide.title || guide.url} ↗</a></li>)}</ul></div>}
-        <div className="cv-packet-actions">
-          <button className="cv-btn cv-btn-ghost" onClick={() => void downloadPacket()}>Download .md</button>
-          <button className="cv-btn cv-btn-indigo" onClick={() => void sendPacket()}>Send to Telegram</button>
-          <button className="cv-btn cv-btn-ghost" onClick={() => { setPacket(null); setPacketNote(''); }}>Hide packet</button>
+    {detailNode ? (
+      /* ---- Step detail (panel 5) ---- */
+      <aside className="nf-step-layout" aria-label="Step details" style={{ marginTop: 12 }}>
+        <div className="nf-card nf-rail" aria-label="All pathway steps">
+          {nodes.map((n, i) => {
+            const st = getStatus(n);
+            const done = st === 'verified';
+            return <button key={n.id} className={`${n.id === detailId ? 'is-active' : ''} ${done ? 'is-done' : ''}`} onClick={() => { setDetailId(n.id); setSelected(n); }} aria-current={n.id === detailId ? 'step' : undefined}>
+              <span className="nf-rail-num">{done ? '✓' : i + 1}</span>
+              <span><small>{n.title}</small><br /><span className="nf-rail-st">{done ? 'Done' : n.id === detailId ? 'Current' : 'Pending'}</span></span>
+            </button>;
+          })}
         </div>
-        {packetNote && <p role="status">{packetNote}</p>}
+        <div className="nf-card nf-step-main">
+          <button className="nf-text-link" onClick={() => setDetailId(null)}>← Back to roadmap</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+            <span className="nf-badge is-progress">Step {detailIndex + 1}</span>
+            {getStatus(detailNode) === 'verified' ? <span className="nf-badge is-done">Done</span> : <span className="nf-badge is-progress">Current Step</span>}
+          </div>
+          <h1>{detailNode.title}</h1>
+          <p>{detailNode.detail || 'Step in this civic procedure.'}</p>
+          {detailNode.fee && <p style={{ fontSize: 13 }}><b>Fee:</b> {detailNode.fee}</p>}
+          <div className="nf-req-docs">
+            <h3>Required Documents</h3>
+            {packet && packet.checklist.length > 0 ? packet.checklist.map((doc) => <div className="nf-req-row" key={doc}><span className="nf-doc-ic" aria-hidden="true">📄</span><span><strong>{doc}</strong></span><span className="nf-spacer" />{detailNode.url && <a className="nf-link-btn" href={detailNode.url} target="_blank" rel="noreferrer">View Example</a>}</div>)
+              : <p className="nf-muted" style={{ fontSize: 13 }}>Load the path workflow packet below to see the exact document checklist extracted from official sources.</p>}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            {detailNode.link && detailNode.link !== detailNode.url && <a className="nf-btn nf-btn-outline nf-btn-sm" href={detailNode.link} target="_blank" rel="noreferrer">Open application / form ↗</a>}
+            {detailNode.url && <a className="nf-btn nf-btn-outline nf-btn-sm" href={detailNode.url} target="_blank" rel="noreferrer">Open official site ↗</a>}
+            {payload.verified && getStatus(detailNode) !== 'verified' && <button className="nf-btn nf-btn-primary nf-btn-sm" onClick={() => void markDone(detailNode)}>✓ Mark complete</button>}
+            {getStatus(detailNode) === 'verified' && <span className="nf-badge is-done">Complete</span>}
+          </div>
+        </div>
+        <div className="nf-side-stack">
+          <div className="nf-card nf-side-card">
+            <h3>Official Source</h3>
+            <p className="nf-sub">{detailNode.url ? sourceName(detailNode.url) : 'No direct source link for this step.'}</p>
+            {detailNode.url && <a className="nf-btn nf-btn-outline nf-btn-sm nf-btn-block" href={detailNode.url} target="_blank" rel="noreferrer">View Source ↗</a>}
+            <div className="nf-kv" style={{ marginTop: 8 }}><span className="nf-k">Estimated Time</span><span className="nf-v">Confirm on official site</span></div>
+          </div>
+          <div className="nf-card nf-side-card">
+            <h3>Next Step</h3>
+            <p className="nf-sub">{nextNode ? nextNode.title : 'This is the final step.'}</p>
+            {nextNode && <button className="nf-btn nf-btn-ghost nf-btn-sm nf-btn-block" onClick={() => { setDetailId(nextNode.id); setSelected(nextNode); }}>{nextNode.title} →</button>}
+          </div>
+        </div>
+      </aside>
+    ) : (
+      /* ---- Visual roadmap (panel 4) ---- */
+      <div className="nf-road-layout" style={{ marginTop: 4 }}>
+        <div className="nf-card nf-flow-card" aria-label="Visual pathway flow">
+          <div className="nf-flow-list" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}>
+            {nodes.length === 0 && <p className="nf-muted">No steps match these filters.</p>}
+            {nodes.map((node) => {
+              const st = getStatus(node);
+              const isDone = st === 'verified';
+              const cls = isDone ? 'is-done' : node.id === nodes[Math.min(doneCount, nodes.length - 1)]?.id ? 'is-current' : st === 'action' ? 'is-action' : '';
+              return <div className="nf-flow-node-wrap" key={node.id}>
+                <button className={`nf-flow-pill ${cls}`} onClick={() => { setDetailId(node.id); setSelected(node); }} aria-label={`Open step details: ${node.title}`}>
+                  <span className="nf-ndot" style={{ background: nodeColor(st) }} aria-hidden="true">{isDone ? '✓' : '•'}</span><span className="nf-pill-txt" data-title={node.title} aria-hidden="true" />
+                </button>
+              </div>;
+            })}
+          </div>
+          <div className="nf-flow-legend" aria-hidden="true">
+            <span><i style={{ background: '#2f7fe0' }} />Step Order</span>
+            <span><i style={{ background: '#7a5af8' }} />Dependency</span>
+            <span><i style={{ background: '#2f9e6e' }} />Completed</span>
+            <span><i style={{ background: '#dd8a0b' }} />Pending</span>
+            <span><i style={{ background: '#2f7fe0' }} />Current</span>
+          </div>
+          <div className="nf-zoom" aria-label="Flow zoom">
+            <button onClick={() => setZoom((z) => Math.min(1.4, +(z + 0.1).toFixed(2)))} aria-label="Zoom in">+</button>
+            <button onClick={() => setZoom((z) => Math.max(0.7, +(z - 0.1).toFixed(2)))} aria-label="Zoom out">−</button>
+          </div>
+        </div>
+        <div className="nf-side-stack">
+          <div className="nf-card nf-keyinfo" aria-label="Key information">
+            <h3>🛈 Key Information</h3>
+            <div className="nf-kv"><span className="nf-k">Department</span><span className="nf-v">{payload.service_type || 'Municipal body'}</span></div>
+            <div className="nf-kv"><span className="nf-k">Processing Time</span><span className="nf-v">Confirm on official site</span></div>
+            <div className="nf-kv"><span className="nf-k">Fees</span><span className="nf-v">{fees.length ? fees.join(' · ') : 'As per official notice'}</span></div>
+            <div className="nf-kv"><span className="nf-k">Office</span><span className="nf-v">{location ? `${location}` : 'See official portal'}</span></div>
+            {firstSource && <a className="nf-btn nf-btn-primary nf-btn-sm nf-btn-block" style={{ marginTop: 10 }} href={firstSource} target="_blank" rel="noreferrer">View Official Website ↗</a>}
+          </div>
+          <div className="nf-card nf-docs-card" aria-label="Documents required">
+            <h3>Documents Required</h3>
+            {packet && packet.checklist.length > 0 ? packet.checklist.slice(0, 6).map((doc) => <div className="nf-doc-item" key={doc}><span className="nf-doc-ic" aria-hidden="true">📄</span><div><strong>{doc}</strong><small>See packet checklist</small></div></div>)
+              : <p className="nf-muted" style={{ fontSize: 13 }}>{docNodes.length > 0 ? `${docNodes.length} document step${docNodes.length === 1 ? '' : 's'} identified — load the packet below for the exact checklist.` : 'Load the packet below for the exact document checklist.'}</p>}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ---- filters + list/map ---- */}
+    <div className="nf-filter-bar" style={{ marginTop: 18 }}>
+      <input value={filters.q} onChange={(e) => updateFilter('q', e.target.value)} placeholder="⌕ Search steps, documents or fees" aria-label="Search pathway steps" />
+      <select value={filters.node_type} onChange={(e) => updateFilter('node_type', e.target.value)} aria-label="Filter by step type"><option value="">All step types</option>{(payload.filters?.types || []).map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}</select>
+      <select value={filters.status} onChange={(e) => updateFilter('status', e.target.value)} aria-label="Filter by status"><option value="">All statuses</option>{(payload.filters?.statuses || []).map((s) => <option key={s} value={s}>{STATUS_CONFIG[s as Status]?.badge || s}</option>)}</select>
+      <button className="nf-btn nf-btn-ghost nf-btn-sm" onClick={resetFilters}>Reset</button>
+      <div className="cv-view-toggle" role="group" aria-label="Pathway display mode"><button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>☷ List</button><button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}>⌘ Map</button></div>
+    </div>
+    <p className="nf-filter-note" aria-live="polite">{loading ? 'Refreshing steps…' : `${nodes.length} visible steps`}{(filters.q || filters.node_type || filters.status) && <span> · Filters are synced with the API</span>}</p>
+
+    {view === 'map' ? <section className="nf-card" style={{ height: 480, overflow: 'hidden' }} aria-label="Interactive civic procedure map"><ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView minZoom={0.35} maxZoom={1.4}><MiniMap nodeColor={(node) => STATUS_CONFIG[(node.data?.status || 'ready') as Status]?.color || '#187b69'} /><Controls /><Background color="#dce8e3" gap={22} /></ReactFlow>{flowNodes.length === 0 && <div style={{ padding: 16 }}>No steps match these filters. <button className="nf-link-btn" onClick={resetFilters}>Clear filters</button></div>}</section>
+      : <section aria-label="Pathway steps">{nodes.map((node, index) => {
+        const status = getStatus(node);
+        const cfg = STATUS_CONFIG[status];
+        return <article className="cv-filtered-step" key={node.id}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>{status !== 'verified' && <span className="nf-badge" style={{ background: cfg.bg, color: cfg.color }}>{cfg.icon} {cfg.badge}</span>}<span className="nf-muted" style={{ fontSize: 12.5 }}>Step {index + 1}</span></div>
+          <h2 style={{ fontSize: 16, margin: '0 0 4px' }}>{node.title}</h2>
+          <p className="nf-muted" style={{ fontSize: 13.5, margin: '0 0 6px' }}>{node.detail || 'Step in this civic procedure.'}</p>
+          {node.fee && <p style={{ fontSize: 13 }}><b>Fee:</b> {node.fee}</p>}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 8 }}>
+            {node.link && node.link !== node.url && <a className="nf-link-btn" href={node.link} target="_blank" rel="noreferrer">Apply / open form ↗</a>}
+            {node.url && <a className="nf-link-btn" href={node.url} target="_blank" rel="noreferrer">Official source ↗</a>}
+            <button className="nf-link-btn" onClick={() => { setDetailId(node.id); setSelected(node); }} aria-label={`Open step details: ${node.title}`}>Details →</button>
+            {payload.verified && status !== 'verified' && <button className="nf-btn nf-btn-ghost nf-btn-sm" onClick={() => void markDone(node)}>Mark complete</button>}
+            {status === 'verified' && <span className="nf-badge is-done">Complete</span>}
+          </div>
+        </article>;
+      })}{nodes.length === 0 && <div className="nf-card" style={{ padding: 16 }}>No steps match these filters. <button className="nf-link-btn" onClick={resetFilters}>Clear filters</button></div>}</section>}
+
+    {/* ---- packet ---- */}
+    <section className="nf-card" style={{ padding: 20, marginTop: 18 }} aria-label="Path workflow packet">
+      <span className="nf-eyebrow">PATH WORKFLOW PACKET</span>
+      <h2 style={{ fontSize: 17, margin: '4px 0 6px' }}>Your packet: steps, checklist, guides</h2>
+      {!packet && !packetBusy && <p className="nf-muted" style={{ fontSize: 13.5 }}>One bundle with the ordered steps, your document checklist, official guide links, and every source (with the real redirect target we verified) — downloadable as Markdown or sent to your Telegram.</p>}
+      {!packet && !packetBusy && <button className="nf-btn nf-btn-primary nf-btn-sm" style={{ marginTop: 8 }} onClick={() => void loadPacket()}>Load packet</button>}
+      {packetBusy && <p role="status">Building your packet from the fetched sources…</p>}
+      {packetErr && <div className="nf-error-box" role="alert">{packetErr}</div>}
+      {packet && <div className="cv-packet-body">
+        {!!packet.warnings?.length && <div className="nf-banner is-warn" role="note"><span aria-hidden="true">!</span><p><strong>Source warnings for this packet.</strong> {packet.warnings.join(' ')}</p></div>}
+        <p className="nf-muted" style={{ fontSize: 13 }}>{packet.counts.steps} steps · {packet.counts.documents} documents · {packet.counts.sources} sources · {packet.counts.guides} guides · generated {new Date(packet.generated_at).toLocaleString()}</p>
+        {packet.checklist.length > 0 && <div><h3 style={{ fontSize: 14 }}>Document checklist</h3><ul style={{ fontSize: 13.5 }}>{packet.checklist.map((doc) => <li key={doc}>{doc}</li>)}</ul></div>}
+        {packet.guides.length > 0 && <div><h3 style={{ fontSize: 14 }}>Official guides</h3><ul style={{ fontSize: 13.5 }}>{packet.guides.map((guide) => <li key={guide.url}><a href={guide.url} target="_blank" rel="noreferrer">{guide.title || guide.url} ↗</a></li>)}</ul></div>}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+          <button className="nf-btn nf-btn-ghost nf-btn-sm" onClick={() => void downloadPacket()}>Download .md</button>
+          <button className="nf-btn nf-btn-primary nf-btn-sm" onClick={() => void sendPacket()}>Send to Telegram</button>
+          <button className="nf-btn nf-btn-ghost nf-btn-sm" onClick={() => { setPacket(null); setPacketNote(''); }}>Hide packet</button>
+        </div>
+        {packetNote && <p role="status" style={{ fontSize: 13.5 }}>{packetNote}</p>}
       </div>}
     </section>
 
-    <section className="cv-sources-section cv-map-sources cv-roadmap-panel"><div className="cv-sources-title-row"><div><span className="cv-eyebrow">SOURCE LINKS</span><h2>Official sources for this pathway</h2></div><span className="cv-source-count">{payload.sources?.length || 0} source{payload.sources?.length === 1 ? '' : 's'}</span></div>
-      {!!payload.sources?.length ? <div className="cv-roadmap-source-list">{payload.sources.map((source, index) => { const url = sourceUrl(source); const okay = sourceOk(source); return <a className="cv-roadmap-source" key={`${url}-${index}`} href={url || undefined} target="_blank" rel="noreferrer"><span className={`cv-source-status-dot ${okay ? 'is-ok' : 'is-error'}`}>{okay ? '✓' : '!'}</span><span><strong>{sourceName(source)}</strong><small>{okay ? 'Fetched for this pathway' : 'Source could not be fetched'}</small></span><span aria-hidden="true">↗</span></a>; })}</div> : <p className="cv-muted">No source links were saved with this pathway.</p>}
-      <p className="cv-source-disclaimer">Always confirm current eligibility, fees, documents and deadlines on the official site before applying.</p>
+    {/* ---- sources ---- */}
+    <section className="nf-card" style={{ padding: 20, marginTop: 18 }} aria-label="Official sources">
+      <span className="nf-eyebrow">SOURCE LINKS</span>
+      <h2 style={{ fontSize: 17, margin: '4px 0 6px' }}>Official sources for this pathway <span className="nf-muted" style={{ fontSize: 13 }}>({payload.sources?.length || 0})</span></h2>
+      {!!payload.sources?.length ? payload.sources.map((source, index) => {
+        const url = sourceUrl(source);
+        const okay = sourceOk(source);
+        return <div className="nf-source-row" key={`${url}-${index}`}><span aria-hidden="true">{okay ? '✓' : '!'}</span><div><strong>{sourceName(source)}</strong><small>{okay ? 'Fetched for this pathway' : 'Source could not be fetched'}</small></div>{url && <a href={url} target="_blank" rel="noreferrer" aria-label={`Open source ${sourceName(source)}`}>↗</a>}</div>;
+      }) : <p className="nf-muted" style={{ fontSize: 13.5 }}>No source links were saved with this pathway.</p>}
+      <p className="nf-muted" style={{ fontSize: 12.5, marginTop: 8 }}>Always confirm current eligibility, fees, documents and deadlines on the official site before applying.</p>
     </section>
 
-    {selected && <aside className="cv-detail-panel cv-map-detail" aria-label="Step details"><button onClick={() => setSelected(null)} className="cv-close-btn" aria-label="Close step details">×</button><span className={`cv-status cv-status-${getStatus(selected)}`}>{STATUS_CONFIG[getStatus(selected)].badge}</span><h2>{selected.title}</h2><p>{selected.detail || 'No additional details are available for this step.'}</p>{selected.fee && <p><b>Fee:</b> {selected.fee}</p>}{selected.link && selected.link !== selected.url && <a href={selected.link} target="_blank" rel="noreferrer">Open application / form ↗</a>}{selected.url && <a href={selected.url} target="_blank" rel="noreferrer">Open official site ↗</a>}{payload.edge_sources && (() => { const key = Object.keys(payload.edge_sources).find((candidate) => candidate.includes(selected.id)); return key ? <p><small>Source: {payload.edge_sources[key]}</small></p> : null; })()}{payload.verified && getStatus(selected) !== 'verified' && <button className="cv-btn cv-btn-indigo" onClick={() => void markDone(selected)}>✓ Mark complete</button>}</aside>}
+    {selected && !detailNode && <aside className="nf-card" style={{ padding: 20, marginTop: 18 }} aria-label="Step details">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span className="nf-badge is-info">{STATUS_CONFIG[getStatus(selected)].badge}</span><button className="nf-link-btn" onClick={() => setSelected(null)} aria-label="Close step details">× Close</button></div>
+      <h2 style={{ fontSize: 17, margin: '8px 0 4px' }}>{selected.title}</h2>
+      <p className="nf-muted" style={{ fontSize: 13.5 }}>{selected.detail || 'No additional details are available for this step.'}</p>
+      {selected.fee && <p style={{ fontSize: 13 }}><b>Fee:</b> {selected.fee}</p>}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 8 }}>
+        {selected.link && selected.link !== selected.url && <a className="nf-link-btn" href={selected.link} target="_blank" rel="noreferrer">Open application / form ↗</a>}
+        {selected.url && <a className="nf-link-btn" href={selected.url} target="_blank" rel="noreferrer">Open official site ↗</a>}
+        {payload.verified && getStatus(selected) !== 'verified' && <button className="nf-btn nf-btn-primary nf-btn-sm" onClick={() => void markDone(selected)}>✓ Mark complete</button>}
+      </div>
+    </aside>}
   </div>;
 }

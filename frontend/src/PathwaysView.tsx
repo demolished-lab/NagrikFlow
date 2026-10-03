@@ -40,21 +40,37 @@ export default function PathwaysView({ onOpenPath }: Props) {
     return () => window.removeEventListener('civic:pathways-updated', refresh);
   }, [load]);
 
-  return <section className="cv-pathways-page cv-anim-up">
-    <div className="cv-page-heading">
-      <div><span className="cv-eyebrow">YOUR CIVIC TASKS</span><h1>My pathways</h1><p>Continue a saved procedure or check its review status.</p></div>
-      <button className="cv-btn cv-btn-indigo" onClick={() => { window.location.hash = ''; }}>＋ Build a pathway</button>
+  return <div>
+    <div className="nf-crumb"><button onClick={() => { window.location.hash = ''; }}>Home</button> · <b>My pathways</b></div>
+    <div className="nf-page-head">
+      <span className="nf-eyebrow">Your civic tasks</span>
+      <h1>My pathways</h1>
+      <p>Continue a saved procedure or check its review status.</p>
     </div>
-    {error && <div className="cv-api-error" role="alert">{error} <button onClick={() => void load()}>Try again</button></div>}
-    {loading ? <p className="cv-muted" role="status">Loading your saved pathways…</p> : pathways.length === 0 ? <div className="cv-empty-card">
-      <span className="cv-empty-icon" aria-hidden="true">⌁</span><h2>No pathways yet</h2><p>Describe a civic task and we’ll save its steps and source links here.</p><button className="cv-btn cv-btn-indigo" onClick={() => { window.location.hash = ''; }}>Describe your first task</button>
-    </div> : <div className="cv-pathway-list">{pathways.map((path) => <article className="cv-pathway-record" key={`${path.job_id}-${path.slug}`}>
-      <div className="cv-pathway-record-top"><span className="cv-path-icon" aria-hidden="true">⌂</span><div className="cv-pathway-record-title"><h2>{path.title}</h2><p>{locationOf(path)} <span aria-hidden="true">·</span> Started {path.created_at ? new Date(path.created_at).toLocaleDateString() : 'recently'}</p></div><span className={`cv-status-pill ${path.verified ? 'is-verified' : path.status === 'failed' ? 'is-failed' : 'is-pending'}`}>{path.verified ? '✓ ' : '• '}{statusLabel(path)}</span></div>
-      {path.error && <p className="cv-inline-error">{path.error}</p>}
-      <div className="cv-pathway-progress"><div className="cv-progress-copy"><span>{path.completed || 0} of {path.steps || 0} steps complete</span><span>{path.steps ? Math.round(((path.completed || 0) / path.steps) * 100) : 0}%</span></div><div className="cv-progress-track"><span style={{ width: `${path.steps ? Math.min(100, ((path.completed || 0) / path.steps) * 100) : 0}%` }} /></div></div>
-      {!!path.steps_preview?.length && <ol className="cv-pathway-preview">{path.steps_preview.slice(0, 4).map((step, index) => <li key={step.id || index}><span className="cv-preview-index">{index + 1}</span><span><strong>{step.title}</strong>{step.detail && <small>{step.detail}</small>}</span>{step.url && <a href={step.url} target="_blank" rel="noreferrer" aria-label={`Open official source for ${step.title}`}>↗</a>}</li>)}</ol>}
-      {!!path.sources?.length && <p className="cv-pathway-source-count">{path.sources.length} source{path.sources.length === 1 ? '' : 's'} attached</p>}
-      <div className="cv-pathway-record-actions">{path.status !== 'failed' && <button className="cv-btn cv-btn-ghost" onClick={() => onOpenPath(path.slug)} disabled={!path.slug}>Open pathway</button>}{(path.status === 'queued' || path.status === 'running') && <span className="cv-muted">This pathway is still building. Refresh this page to update its status.</span>}</div>
-    </article>)}</div>}
-  </section>;
+    {error && <div className="nf-error-box" role="alert">{error} <button className="nf-link-btn" onClick={() => void load()}>Try again</button></div>}
+    {loading ? <div className="nf-card" style={{ padding: 20 }} role="status"><p className="nf-muted">Loading your saved pathways…</p></div>
+      : pathways.length === 0 ? <div className="nf-card" style={{ padding: 28, textAlign: 'center' }}>
+        <h2>No pathways yet</h2><p className="nf-muted">Describe a civic task and we&rsquo;ll save its steps and source links here.</p>
+        <button className="nf-btn nf-btn-primary" onClick={() => { window.location.hash = ''; }}>Describe your first task</button>
+      </div>
+      : <div>{pathways.map((path) => <article className="nf-card nf-result-card" key={`${path.job_id}-${path.slug}`}>
+        <span className="nf-result-icon" style={{ background: 'var(--nf-primary-soft)' }} aria-hidden="true">🏛</span>
+        <div className="nf-result-body">
+          <h2 style={{ fontSize: 16, margin: '0 0 2px' }}>{path.title}</h2>
+          <p className="nf-dept">{locationOf(path)} · Started {path.created_at ? new Date(path.created_at).toLocaleDateString() : 'recently'}</p>
+          {path.error && <p className="nf-error-box">{path.error}</p>}
+          <div className="nf-progress-copy"><span>{path.completed || 0} of {path.steps || 0} steps complete</span><span>{path.steps ? Math.round(((path.completed || 0) / path.steps) * 100) : 0}%</span></div>
+          <div className="nf-progress-track"><span style={{ width: `${path.steps ? Math.min(100, ((path.completed || 0) / path.steps) * 100) : 0}%` }} /></div>
+          {!!path.steps_preview?.length && <ol className="nf-step-rows">{path.steps_preview.slice(0, 3).map((step, i) => <li key={step.id || i}><span className="nf-tl-marker">{i + 1}</span><div><strong style={{ fontSize: 13.5 }}>{step.title}</strong><br />{step.detail && <small className="nf-muted">{step.detail}</small>}</div></li>)}</ol>}
+          {!!path.sources?.length && <p className="nf-muted" style={{ fontSize: 12.5 }}>{path.sources.length} source{path.sources.length === 1 ? '' : 's'} attached</p>}
+        </div>
+        <div className="nf-result-side">
+          <span className={`nf-badge ${path.verified ? 'is-done' : path.status === 'failed' ? 'is-error' : 'is-pending'}`}>{statusLabel(path)}</span>
+          {path.status !== 'failed'
+            ? <button className="nf-btn nf-btn-outline nf-btn-sm" onClick={() => onOpenPath(path.slug)} disabled={!path.slug} aria-label="Open pathway">View Path →</button>
+            : <span className="nf-muted" style={{ fontSize: 12.5 }}>Build failed — try again from Home.</span>}
+          {(path.status === 'queued' || path.status === 'running') && <span className="nf-muted" style={{ fontSize: 12.5 }}>Still building — refresh to update.</span>}
+        </div>
+      </article>)}</div>}
+  </div>;
 }

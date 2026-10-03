@@ -5,6 +5,7 @@ import './styles.css';
 import './public-landing.css';
 import './a11y.css';
 import './reference-ui.css';
+import './nf-theme.css';
 import { lang } from './i18n';
 
 document.documentElement.lang = lang() === 'hi' ? 'hi' : 'en';

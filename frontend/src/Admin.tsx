@@ -25,6 +25,10 @@ type AdminStep = {
 const STEP_TYPES = ['prereq', 'action', 'payment', 'visit', 'unlocked', 'document'];
 const EMPTY_STEP = { title: '', detail: '', fee: '', url: '', link: '', type: 'action' };
 
+function scrollTo(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 export default function Admin() {
   const t = STR[lang()];
   const [maps, setMaps] = useState<AdminMap[]>([]);
@@ -39,6 +43,7 @@ export default function Admin() {
   const [draft, setDraft] = useState<AdminStep | null>(null);
   const [newStep, setNewStep] = useState({ ...EMPTY_STEP });
   const [stepBusy, setStepBusy] = useState(false);
+  const [side, setSide] = useState('overview');
 
   const load = useCallback(async () => {
     try {
@@ -203,82 +208,139 @@ export default function Admin() {
     }
   };
 
-  return <div className="cv-admin-view cv-anim-up">
-    <header className="cv-admin-header">
-      <div><span className="cv-eyebrow">ADMIN WORKSPACE</span><h1>Pathway verification desk</h1><p>Review source-backed civic maps, approve verified workflows, and recheck changes from official websites.</p></div>
-      <span className="cv-admin-role">ADMIN ONLY</span>
-    </header>
+  const go = (id: string) => { setSide(id); scrollTo(`admin-${id}`); };
+  const pending = maps.filter((m) => !m.verified).length;
+  const validated = maps.filter((m) => m.verified).length;
 
-    {err && <div className="cv-admin-notice is-error" role="alert">{err}<button type="button" onClick={() => setErr('')} aria-label="Dismiss error">×</button></div>}
-    {notice && <div className="cv-admin-notice" role="status">{notice}<button type="button" onClick={() => setNotice('')} aria-label="Dismiss message">×</button></div>}
+  return <div>
+    <div className="nf-crumb"><button onClick={() => { window.location.hash = ''; }}>Home</button> · <b>Admin Dashboard</b></div>
+    <div className="nf-page-head">
+      <span className="nf-eyebrow">Admin workspace</span>
+      <h1>Pathway verification desk</h1>
+      <p>Review source-backed civic maps, approve verified workflows, and recheck changes from official websites.</p>
+    </div>
 
-    <section className="cv-admin-panel" aria-labelledby="admin-review-heading">
-      <div className="cv-admin-section-head">
-        <div><h2 id="admin-review-heading">Pathway review</h2><p>Review source freshness before marking a map ready for citizen progress tracking.</p></div>
-        <button className="cv-admin-recheck" type="button" onClick={() => void recheck('')} disabled={Boolean(checking)}>{checking === 'all' ? 'Checking all sources…' : t.admRecheckAll}</button>
-      </div>
-      {loading ? <p className="cv-muted" role="status">Loading pathways…</p> : maps.length === 0 ? <div className="cv-admin-empty">No pathway maps are available for review yet.</div> : <div className="cv-admin-list">{maps.map((map) => {
-        const sources = (map.sources || []).map((source) => typeof source === 'string' ? source : source?.url || '').filter(Boolean);
-        return <article className="cv-admin-map" key={map.slug}>
-          <div className="cv-admin-map-main">
-            <h3 className="cv-admin-map-title">{map.title}</h3>
-            <p className="cv-admin-map-meta"><strong>{map.verified ? 'Reviewed and verified' : 'Awaiting review'}</strong> · {map.slug} · {map.steps || 0} steps</p>
-            <p className="cv-admin-map-meta">Content hash: {map.hash || '—'} · Last checked: {map.checked || 'Never'}</p>
-            <p className="cv-admin-map-sources"><strong>Official sources:</strong> {sources.length ? sources.join(' · ') : 'No source URLs recorded'}</p>
+    {err && <div className="nf-error-box" role="alert" style={{ marginBottom: 12 }}>{err}<button type="button" className="nf-link-btn" onClick={() => setErr('')} aria-label="Dismiss error"> ×</button></div>}
+    {notice && <div className="nf-ok-box" role="status" style={{ marginBottom: 12 }}>{notice}<button type="button" className="nf-link-btn" onClick={() => setNotice('')} aria-label="Dismiss message"> ×</button></div>}
+
+    <div className="nf-admin-layout">
+      <aside className="nf-card nf-admin-side" aria-label="Admin sections">
+        {[['overview', '◉', 'Overview'], ['queue', '☰', 'Extraction Queue'], ['review', '✓', 'Validation'], ['build', '＋', 'Build map'], ['users', '👥', 'Users'], ['reports', '📊', 'Reports'], ['settings', '⚙', 'Settings']].map(([id, icon, label]) => (
+          <button key={id} className={side === id ? 'is-active' : ''} onClick={() => go(id)}><span aria-hidden="true">{icon}</span>{label}</button>
+        ))}
+      </aside>
+
+      <div>
+        <section id="admin-overview" aria-label="Overview">
+          <div className="nf-admin-stats">
+            <div className="nf-card nf-stat"><span className="nf-stat-ic" style={{ background: 'var(--nf-blue-soft)' }} aria-hidden="true">📚</span><div><b>{loading ? '…' : maps.length}</b><small>Total Services</small></div></div>
+            <div className="nf-card nf-stat"><span className="nf-stat-ic" style={{ background: 'var(--nf-amber-soft)' }} aria-hidden="true">⏳</span><div><b>{loading ? '…' : pending}</b><small>Pending Review</small></div></div>
+            <div className="nf-card nf-stat"><span className="nf-stat-ic" style={{ background: 'var(--nf-green-soft)' }} aria-hidden="true">✅</span><div><b>{loading ? '…' : validated}</b><small>Validated</small></div></div>
+            <div className="nf-card nf-stat"><span className="nf-stat-ic" style={{ background: 'var(--nf-red-soft)' }} aria-hidden="true">⚠</span><div><b>0</b><small>Conflicts</small></div></div>
           </div>
-          <div className="cv-admin-map-actions">
-            <button type="button" onClick={() => void verify(map.slug, !map.verified)}>{map.verified ? t.admUnverify : t.admVerify}</button>
-            <button type="button" onClick={() => void recheck(map.slug)} disabled={Boolean(checking)}>{checking === map.slug ? 'Checking…' : t.admRecheck}</button>
-            <button type="button" onClick={() => void toggleSteps(map.slug)}>{editingSlug === map.slug ? 'Close editor' : 'Edit steps'}</button>
-          </div>
-          {editingSlug === map.slug && <div className="cv-admin-step-editor" style={{ width: '100%' }}>
-            <h4>Step editor — {map.title}</h4>
-            <p className="cv-muted" style={{ margin: '0 0 8px' }}>Update titles, details, fees and official links. Edits persist until the map is rebuilt from sources.</p>
-            {steps.length === 0 ? <p className="cv-muted">This map has no steps yet — add the first one below.</p> : steps.map((step) => draft?.id === step.id
-              ? <div className="cv-admin-form" key={step.id} style={{ border: '1px dashed #c9d4d0', borderRadius: 8, padding: 10, marginBottom: 8 }}>
-                  <label className="cv-admin-field">Title<input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
-                  <div className="cv-admin-form-grid">
-                    <label className="cv-admin-field">Type<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value })}>{STEP_TYPES.map((kind) => <option key={kind} value={kind}>{kind}</option>)}</select></label>
-                    <label className="cv-admin-field">Fee<input value={draft.fee || ''} onChange={(event) => setDraft({ ...draft, fee: event.target.value })} placeholder="e.g. ₹500" /></label>
-                  </div>
-                  <label className="cv-admin-field">Official source URL<input value={draft.url || ''} onChange={(event) => setDraft({ ...draft, url: event.target.value })} placeholder="https://...gov.in/..." /></label>
-                  <label className="cv-admin-field">Application / form link<input value={draft.link || ''} onChange={(event) => setDraft({ ...draft, link: event.target.value })} placeholder="https://...gov.in/form (deep link, optional)" /></label>
-                  <label className="cv-admin-field">Detail<textarea value={draft.detail || ''} rows={2} onChange={(event) => setDraft({ ...draft, detail: event.target.value })} /></label>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="button" onClick={() => void saveStep(map.slug)} disabled={stepBusy || !draft.title.trim()}>{stepBusy ? 'Saving…' : 'Save step'}</button>
-                    <button type="button" onClick={() => setDraft(null)} disabled={stepBusy}>Cancel</button>
-                  </div>
-                </div>
-              : <div className="cv-admin-step-row" key={step.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid #eef2f0' }}>
-                  <strong style={{ flex: 1 }}>{step.title}</strong>
-                  <small className="cv-muted">{step.type}{step.fee ? ` · ${step.fee}` : ''}</small>
-                  <button type="button" onClick={() => setDraft({ ...step })} disabled={stepBusy}>Edit</button>
-                  <button type="button" onClick={() => void deleteStep(map.slug, step.id)} disabled={stepBusy}>Delete</button>
-                </div>)}
-            <div className="cv-admin-form" style={{ marginTop: 10 }}>
-              <div className="cv-admin-form-grid">
-                <label className="cv-admin-field">New step title<input value={newStep.title} onChange={(event) => setNewStep({ ...newStep, title: event.target.value })} placeholder="e.g. Collect signed declaration" /></label>
-                <label className="cv-admin-field">Type<select value={newStep.type} onChange={(event) => setNewStep({ ...newStep, type: event.target.value })}>{STEP_TYPES.map((kind) => <option key={kind} value={kind}>{kind}</option>)}</select></label>
+        </section>
+
+        <section id="admin-queue" aria-label="Extraction queue" style={{ marginBottom: 18 }}>
+          <div className="nf-section-head"><h2>Extraction Queue</h2><button className="nf-text-link" onClick={() => { setSide('review'); scrollTo('admin-review'); }}>View All →</button></div>
+          <div className="nf-table-wrap"><table className="nf-table">
+            <thead><tr><th>Service</th><th>Source</th><th>Status</th><th>Updated At</th><th>Action</th></tr></thead>
+            <tbody>
+              {loading && <tr><td colSpan={5} role="status">Loading pathways…</td></tr>}
+              {!loading && maps.length === 0 && <tr><td colSpan={5}>No pathway maps are available for review yet.</td></tr>}
+              {maps.map((map) => {
+                const sources = (map.sources || []).map((s) => typeof s === 'string' ? s : s?.url || '').filter(Boolean);
+                return <tr key={map.slug}>
+                  <td><strong>{map.title}</strong></td>
+                  <td className="nf-muted">{sources[0] || '—'}</td>
+                  <td><span className={`nf-badge ${map.verified ? 'is-done' : 'is-pending'}`}>{map.verified ? 'Validated' : 'In Progress'}</span></td>
+                  <td className="nf-muted">{map.checked ? new Date(map.checked).toLocaleString() : 'Never'}</td>
+                  <td><button className="nf-tbtn" onClick={() => { setSide('review'); scrollTo('admin-review'); }}>Review</button></td>
+                </tr>;
+              })}
+            </tbody>
+          </table></div>
+        </section>
+
+        <section id="admin-review" className="nf-card nf-admin-panel" aria-labelledby="admin-review-heading">
+          <h2 id="admin-review-heading">Pathway review</h2>
+          <p className="nf-sub">Review source freshness before marking a map ready for citizen progress tracking.</p>
+          <div style={{ marginBottom: 12 }}><button className="nf-btn nf-btn-ghost nf-btn-sm" type="button" onClick={() => void recheck('')} disabled={Boolean(checking)}>{checking === 'all' ? 'Checking all sources…' : t.admRecheckAll}</button></div>
+          {loading ? <p className="nf-muted" role="status">Loading pathways…</p> : maps.length === 0 ? <div className="nf-muted">No pathway maps are available for review yet.</div> : maps.map((map) => {
+            const sources = (map.sources || []).map((s) => typeof s === 'string' ? s : s?.url || '').filter(Boolean);
+            return <article className="nf-admin-map" key={map.slug}>
+              <h3>{map.title}</h3>
+              <p><strong>{map.verified ? 'Reviewed and verified' : 'Awaiting review'}</strong> · {map.slug} · {map.steps || 0} steps</p>
+              <p>Content hash: {map.hash || '—'} · Last checked: {map.checked || 'Never'}</p>
+              <p><strong>Official sources:</strong> {sources.length ? sources.join(' · ') : 'No source URLs recorded'}</p>
+              <div className="nf-admin-actions">
+                <button type="button" className="nf-btn nf-btn-ghost nf-btn-sm" onClick={() => void verify(map.slug, !map.verified)}>{map.verified ? t.admUnverify : t.admVerify}</button>
+                <button type="button" className="nf-btn nf-btn-outline nf-btn-sm" onClick={() => void recheck(map.slug)} disabled={Boolean(checking)}>{checking === map.slug ? 'Checking…' : t.admRecheck}</button>
+                <button type="button" className="nf-btn nf-btn-ghost nf-btn-sm" onClick={() => void toggleSteps(map.slug)}>{editingSlug === map.slug ? 'Close editor' : 'Edit steps'}</button>
               </div>
-              <label className="cv-admin-field">Official source URL<input value={newStep.url} onChange={(event) => setNewStep({ ...newStep, url: event.target.value })} placeholder="https://...gov.in/... (optional)" /></label>
-              <label className="cv-admin-field">Application / form link<input value={newStep.link} onChange={(event) => setNewStep({ ...newStep, link: event.target.value })} placeholder="https://...gov.in/form (deep link, optional)" /></label>
-              <div><button type="button" onClick={() => void addStep(map.slug)} disabled={stepBusy || !newStep.title.trim()}>{stepBusy ? 'Saving…' : 'Add step'}</button></div>
-            </div>
-          </div>}
-        </article>;
-      })}</div>}
-    </section>
+              {editingSlug === map.slug && <div className="nf-admin-form" style={{ marginTop: 12, borderTop: '1px dashed var(--nf-line)', paddingTop: 12 }}>
+                <h4 style={{ margin: '0 0 4px' }}>Step editor — {map.title}</h4>
+                <p className="nf-muted" style={{ fontSize: 12.5 }}>Update titles, details, fees and official links. Edits persist until the map is rebuilt from sources.</p>
+                {steps.length === 0 ? <p className="nf-muted" style={{ fontSize: 13 }}>This map has no steps yet — add the first one below.</p> : steps.map((step) => draft?.id === step.id
+                  ? <div key={step.id} style={{ border: '1px dashed var(--nf-primary)', borderRadius: 10, padding: 12, marginBottom: 8 }}>
+                      <label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label>
+                      <div className="nf-admin-grid2">
+                        <label>Type<select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>{STEP_TYPES.map((k) => <option key={k} value={k}>{k}</option>)}</select></label>
+                        <label>Fee<input value={draft.fee || ''} onChange={(e) => setDraft({ ...draft, fee: e.target.value })} placeholder="e.g. ₹500" /></label>
+                      </div>
+                      <label>Official source URL<input value={draft.url || ''} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="https://...gov.in/..." /></label>
+                      <label>Application / form link<input value={draft.link || ''} onChange={(e) => setDraft({ ...draft, link: e.target.value })} placeholder="https://...gov.in/form (deep link, optional)" /></label>
+                      <label>Detail<textarea value={draft.detail || ''} rows={2} onChange={(e) => setDraft({ ...draft, detail: e.target.value })} /></label>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                        <button type="button" className="nf-btn nf-btn-primary nf-btn-sm" onClick={() => void saveStep(map.slug)} disabled={stepBusy || !draft.title.trim()}>{stepBusy ? 'Saving…' : 'Save step'}</button>
+                        <button type="button" className="nf-btn nf-btn-ghost nf-btn-sm" onClick={() => setDraft(null)} disabled={stepBusy}>Cancel</button>
+                      </div>
+                    </div>
+                  : <div key={step.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--nf-line)' }}>
+                      <strong style={{ flex: 1, fontSize: 13.5 }}>{step.title}</strong>
+                      <small className="nf-muted">{step.type}{step.fee ? ` · ${step.fee}` : ''}</small>
+                      <button type="button" className="nf-link-btn" onClick={() => setDraft({ ...step })} disabled={stepBusy}>Edit</button>
+                      <button type="button" className="nf-link-btn" onClick={() => void deleteStep(map.slug, step.id)} disabled={stepBusy}>Delete</button>
+                    </div>)}
+                <div style={{ marginTop: 10 }}>
+                  <div className="nf-admin-grid2">
+                    <label>New step title<input value={newStep.title} onChange={(e) => setNewStep({ ...newStep, title: e.target.value })} placeholder="e.g. Collect signed declaration" /></label>
+                    <label>Type<select value={newStep.type} onChange={(e) => setNewStep({ ...newStep, type: e.target.value })}>{STEP_TYPES.map((k) => <option key={k} value={k}>{k}</option>)}</select></label>
+                  </div>
+                  <label>Official source URL<input value={newStep.url} onChange={(e) => setNewStep({ ...newStep, url: e.target.value })} placeholder="https://...gov.in/... (optional)" /></label>
+                  <label>Application / form link<input value={newStep.link} onChange={(e) => setNewStep({ ...newStep, link: e.target.value })} placeholder="https://...gov.in/form (deep link, optional)" /></label>
+                  <div style={{ marginTop: 8 }}><button type="button" className="nf-btn nf-btn-primary nf-btn-sm" onClick={() => void addStep(map.slug)} disabled={stepBusy || !newStep.title.trim()}>{stepBusy ? 'Saving…' : 'Add step'}</button></div>
+                </div>
+              </div>}
+            </article>;
+          })}
+        </section>
 
-    <section className="cv-admin-panel" aria-labelledby="admin-build-heading">
-      <div className="cv-admin-section-head"><div><h2 id="admin-build-heading">Build a pathway map</h2><p>Start a source-backed map from known official URLs. New maps remain unverified until reviewed.</p></div></div>
-      <div className="cv-admin-form">
-        <label className="cv-admin-field" htmlFor="admin-task">Civic task<input id="admin-task" value={form.task} placeholder="e.g. Apply for a birth certificate" onChange={(event) => setForm({ ...form, task: event.target.value })}/></label>
-        <div className="cv-admin-form-grid">
-          <label className="cv-admin-field" htmlFor="admin-slug">Pathway slug<input id="admin-slug" value={form.slug} placeholder="e.g. birth-cert" onChange={(event) => setForm({ ...form, slug: event.target.value })}/></label>
-          <label className="cv-admin-field" htmlFor="admin-urls">Official source URLs<textarea id="admin-urls" value={form.urls} rows={3} placeholder="One government URL per line" onChange={(event) => setForm({ ...form, urls: event.target.value })}/></label>
-        </div>
-        <div><button className="cv-btn cv-btn-indigo" type="button" onClick={() => void build()} disabled={building || !form.task.trim() || !form.slug.trim()}>{building ? 'Building map…' : 'Build map'}</button></div>
+        <section id="admin-build" className="nf-card nf-admin-panel" aria-labelledby="admin-build-heading">
+          <h2 id="admin-build-heading">Build a pathway map</h2>
+          <p className="nf-sub">Start a source-backed map from known official URLs. New maps remain unverified until reviewed.</p>
+          <div className="nf-admin-form">
+            <label htmlFor="admin-task">Civic task<input id="admin-task" value={form.task} placeholder="e.g. Apply for a birth certificate" onChange={(e) => setForm({ ...form, task: e.target.value })} /></label>
+            <div className="nf-admin-grid2">
+              <label htmlFor="admin-slug">Pathway slug<input id="admin-slug" value={form.slug} placeholder="e.g. birth-cert" onChange={(e) => setForm({ ...form, slug: e.target.value })} /></label>
+              <label htmlFor="admin-urls">Official source URLs<textarea id="admin-urls" value={form.urls} rows={3} placeholder="One government URL per line" onChange={(e) => setForm({ ...form, urls: e.target.value })} /></label>
+            </div>
+            <div style={{ marginTop: 10 }}><button className="nf-btn nf-btn-primary nf-btn-sm" type="button" onClick={() => void build()} disabled={building || !form.task.trim() || !form.slug.trim()}>{building ? 'Building map…' : 'Build map'}</button></div>
+          </div>
+        </section>
+
+        <section id="admin-users" className="nf-card nf-admin-panel" aria-label="Users">
+          <h2>Users</h2><p className="nf-sub">Administrators with review-desk access.</p>
+          <p style={{ fontSize: 13.5 }}>Signed in as an administrator. Role changes are managed through the backend user store.</p>
+        </section>
+
+        <section id="admin-reports" className="nf-card nf-admin-panel" aria-label="Reports">
+          <h2>Reports</h2><p className="nf-sub">Citizen progress exports run from the documents view; source rechecks run from validation above.</p>
+        </section>
+
+        <section id="admin-settings" className="nf-card nf-admin-panel" aria-label="Settings">
+          <h2>Settings</h2><p className="nf-sub">Server configuration lives in backend environment (DATABASE_URL, REDIS_URL, FRONTEND_ORIGINS). Changes require a backend restart.</p>
+        </section>
       </div>
-    </section>
+    </div>
   </div>;
 }
