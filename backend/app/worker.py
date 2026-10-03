@@ -21,10 +21,16 @@ from urllib.parse import unquote, urlparse
 import trafilatura
 
 from . import llm as llmmod
+from . import semantics as semmod
 from .obs import warn
 
 UA = "CivicPathNavigator/0.1 (civic-guidance research; contact: admin@civicpath.in)"
 MIN_CHARS = 40  # floor that rejects blocks/CAPTCHAs but keeps small gov pages
+
+# Raw HTML captured by the tier-1 fetch, keyed by URL, for the build that
+# just fetched it (schema.org facts + evidence snapshot). Popped by build_map;
+# a missing entry just means the winning tier didn't expose raw markup.
+_RAW_HTML: dict[str, str] = {}
 
 
 def _ok(text: str) -> str:
@@ -80,6 +86,7 @@ def _fetch_tier1_full(url: str) -> tuple[str, str]:
         charset = resp.headers.get_content_charset() or "utf-8"
         final = resp.geturl() or url
     dl = data.decode(charset, errors="replace")
+    _RAW_HTML[url] = dl  # evidence + schema.org extraction (popped by build_map)
     text = trafilatura.extract(dl, include_links=True) or ""
     return _ok(text), final
 
@@ -166,6 +173,7 @@ def cascade_fetch_full(url: str) -> tuple[str, str, str]:
     final_url is where the guarded redirect chain actually landed — the
     packet artifact links citizens to that, not to a 302-hop entry URL."""
     _require_public(url)
+    _RAW_HTML.pop(url, None)  # drop any stale capture from an earlier attempt
     tiers = [("trafilatura", _fetch_tier1_full),
              ("crawl4ai", _fetch_tier2_full),
              ("obscura", _fetch_tier3_full)]
@@ -802,25 +810,44 @@ def llm_infer_edges(task: str, nodes: list[dict]) -> list[list[str]]:
 def build_map(task: str, urls: list[str], city: str = "", state: str = "",
               service_type: str = "") -> dict:
     """Fetch each URL via cascade, extract steps, merge into a cross-source
-    dependency graph (dedupe + prereq inference + LLM refinement + bridging)."""
+    dependency graph (dedupe + prereq inference + LLM refinement + bridging).
+
+    Also returns ``snapshots`` (evidence per source: text + raw HTML when the
+    tier exposed it) for the evidence store, and per-source ``facts`` when the
+    page carried machine-readable schema.org markup."""
     per_source: list[tuple[str, list[dict]]] = []
     sources = []
+    snapshots: list[dict] = []
     for url in urls:
         try:
             text, tier, final = cascade_fetch_full(url)
         except Exception as e:
             sources.append({"url": url, "ok": False, "error": str(e)[:200]})
             continue
+        raw_html = _RAW_HTML.pop(url, "")
+        facts = semmod.service_facts(raw_html, final or url)
         steps, lane, llm_error = _llm_extract_full(text, url, task)
+        if not steps:
+            # neither LLM nor rules found a procedure: fall back to the page
+            # author's own structured markup rather than an empty contribution
+            alt = semmod.facts_to_step(facts, url)
+            if alt:
+                alt["link"] = clean_link(alt.get("link", ""), url)
+                steps = [alt]
         per_source.append((url, steps))
         entry = {"url": url, "ok": True, "tier": tier,
                  "final_url": final,
                  "guides": extract_guides(text, final or url),
                  "extract": lane,
                  "fetched_at": datetime.now(timezone.utc).isoformat()}
+        if facts.get("name"):
+            entry["facts"] = {k: v for k, v in facts.items()
+                              if v and k != "url"}
         if llm_error:
             entry["llm_error"] = llm_error
         sources.append(entry)
+        snapshots.append({"url": url, "final_url": final or url,
+                          "tier": tier, "text": text, "html": raw_html})
 
     nodes, edges, edge_sources = merge_sources(per_source)
     node_ids = {n["id"] for n in nodes}
@@ -833,5 +860,5 @@ def build_map(task: str, urls: list[str], city: str = "", state: str = "",
     verify_links(nodes)
 
     return {"nodes": nodes, "edges": edges, "edge_sources": edge_sources,
-            "sources": sources, "city": city, "state": state,
-            "service_type": service_type}
+            "sources": sources, "snapshots": snapshots, "city": city,
+            "state": state, "service_type": service_type}

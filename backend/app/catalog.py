@@ -39,6 +39,26 @@ CATALOG = [
      "urls": ["https://voters.eci.gov.in/"]},
     {"keywords": ("scheme", "welfare", "benefit", "subsidy", "grant"),
      "urls": ["https://www.myscheme.gov.in/"]},
+    # --- Mumbai / Maharashtra vertical (research P0 sources, 2026-10-04) ---
+    {"keywords": ("shop", "establishment", "trade licence", "trade license",
+                  "hawker", "hoarding", "advertisement licence",
+                  "municipal", "corporation", "local body",
+                  "birth certificate", "death certificate",
+                  "marriage certificate", "property tax",
+                  "building permission", "completion certificate",
+                  "fire licence", "signboard"),
+     "urls": ["https://www.mcgm.gov.in/",
+              "https://aaplesarkar.mahaonline.gov.in/en/CommonForm/ViewAllServices"]},
+    {"keywords": ("mumbai", "maharashtra"),
+     "urls": ["https://www.mcgm.gov.in/",
+              "https://aaplesarkar.mahaonline.gov.in/en/CommonForm/ViewAllServices"]},
+    {"keywords": ("aaple sarkar", "maharashtra state", "rti ",
+                  "family card", "ration card"),
+     "urls": ["https://aaplesarkar.mahaonline.gov.in/en/CommonForm/ViewAllServices"]},
+    # --- Delhi e-District certificates ---
+    {"keywords": ("delhi", "income certificate", "caste certificate",
+                  "domicile certificate", "disability certificate"),
+     "urls": ["https://edistrict.delhi.gov.in/in/en/Public/Services.html"]},
 ]
 
 

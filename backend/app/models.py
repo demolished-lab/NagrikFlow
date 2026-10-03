@@ -150,3 +150,32 @@ class Grievance(SQLModel, table=True):
     resolution: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     resolved_at: datetime | None = None
+
+
+class SourceSnapshot(SQLModel, table=True):
+    """Immutable evidence of what an official page said, and when.
+
+    Appended on every build and every recheck (newest row per map+url is
+    current; history kept a few deep for audit). Text/HTML are capped by
+    evidence module constants — this is proof, not a web archive."""
+    id: int | None = Field(default=None, primary_key=True)
+    map_slug: str = Field(index=True)
+    url: str = Field(index=True)
+    final_url: str = ""
+    tier: str = ""
+    content_hash: str = ""  # sha256 of the fetched text (full hex)
+    raw_hash: str = ""  # sha256 of raw HTML bytes when captured, else ""
+    text: str = ""  # normalized fetched text, capped
+    html: str = ""  # raw HTML evidence, capped ("" when tier didn't expose it)
+    retrieved_at: datetime = Field(default_factory=utcnow)
+
+
+class ChangeEvent(SQLModel, table=True):
+    """Material source change: exactly what moved between two snapshots."""
+    id: int | None = Field(default=None, primary_key=True)
+    map_slug: str = Field(index=True)
+    url: str = ""
+    old_hash: str = ""
+    new_hash: str = ""
+    diff: str = ""  # unified diff, capped for review UI
+    created_at: datetime = Field(default_factory=utcnow)

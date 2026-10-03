@@ -12,6 +12,7 @@ os.environ["ALLOW_DEV_SECRET"] = "1"
 os.environ["LINK_PROBE"] = "0"  # tests must never hit the network
 os.environ["JOB_POLLER"] = "0"  # no background dispatch racing test job rows
 os.environ["RECOVER_JOBS"] = "0"  # recovery also dispatches — off for tests
+os.environ["CIVIC_CDX"] = "0"  # Common Crawl archive lane is network — off
 
 import pytest
 from fastapi.testclient import TestClient

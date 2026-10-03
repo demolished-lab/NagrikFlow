@@ -93,6 +93,12 @@ curl http://127.0.0.1:8000/hermes/tools -H "Authorization: Bearer <token>"
 
 ## Docs
 
+- `FREE_RESOURCES.md` — curated free resources per pipeline stage (India
+  sources, discovery, fetching, extraction, free LLM tiers, storage, change
+  detection, HITL, hosting, datasets, competitors, license danger list)
+- `ENHANCED_FEATURES.md` — what shipped 2026-10-04 (evidence snapshots,
+  readable change diffs, JSON-LD facts, Common Crawl CDX lane, India seeds,
+  free-tier LLM lanes) + P1–P3 roadmap
 - `PENDING.md` — what's left (credentials + institutional track)
 - `GOVERNMENT_READINESS_AUDIT.md` — DPDP compliance checklist mapped to code
 - `PRODUCTION_DEPLOYMENT.md` — deployment runbook with troubleshooting

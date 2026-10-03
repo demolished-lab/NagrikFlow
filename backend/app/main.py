@@ -1440,6 +1440,16 @@ def _scoped_map(slug: str, user: User):
         return m
 
 
+@app.get("/task/{slug}/changes")
+def get_task_changes(slug: str, user: User = Depends(current_user)):
+    """Recorded source changes for a map: what moved, when, with a readable
+    unified diff. Same visibility rule as GET /task/{slug}."""
+    from . import evidence as evidencemod
+    _scoped_map(slug, user)
+    changes = evidencemod.list_changes(engine, slug)
+    return {"slug": slug, "count": len(changes), "changes": changes}
+
+
 @app.get("/task/{slug}/packet")
 def get_task_packet(slug: str, user: User = Depends(current_user)):
     """Citizen path-workflow packet: ordered steps + prerequisites, document

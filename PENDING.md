@@ -224,3 +224,35 @@ Full re-audit verdict was "not production-ready"; every listed blocker fixed:
   design), S110 (11), PLW1510 (21 subprocess sites inspect returncode
   manually), DTZ005/006 (7 naive datetimes, needs a tz audit first).
 - Verified: **pytest 135/135**, `ruff check` 0 errors from both cwds.
+
+## Free-stack sprint (2026-10-04, research → build)
+- [x] **Docs pack** — `FREE_RESOURCES.md` (13-section free-resource registry,
+  4-platform research sweep) + `ENHANCED_FEATURES.md` (shipped list + P1–P3).
+- [x] **Evidence snapshots** — `app/evidence.py` + `models.SourceSnapshot`
+  (text/raw HTML sha256, tier, final URL, timestamp; 50 KB/400 KB caps,
+  newest 4 per (slug,url)), written by `jobs.run_build`.
+- [x] **Readable change diffs** — `models.ChangeEvent` + rewritten
+  `app/watch.py`: recheck stores a capped unified diff of what moved; first
+  recheck is baseline (no event); aggregate fingerprint format unchanged.
+  `GET /task/{slug}/changes` (same visibility as `/task/{slug}`).
+- [x] **JSON-LD structured facts** — `app/semantics.py` (stdlib-only
+  GovernmentService/Offer/HowTo extractor); feeds a source node when LLM +
+  heuristics both return nothing; link passes the gov/same-host gate.
+- [x] **Common Crawl CDX lane** — `discover.cdx_task_urls`: archived deep
+  pages on catalog gov domains, https+.gov only, `CIVIC_CDX=0` opts out
+  (tests run off); discovery order search → cdx → catalog.
+- [x] **India seeds** — BMC/Mumbai + Aaple Sarkar + Delhi e-District catalog
+  entries (shop/trade/municipal/certificate keywords).
+- [x] **Free-tier LLM lanes** — Groq/Gemini/OpenRouter join bynara→ollama
+  when their key env is set; live-probed defaults (`gemini-3.5-flash-lite`,
+  `qwen/qwen3.8-27b:free`); router-style `gemini/` prefix auto-stripped;
+  failure only walks to the next lane. Keys + `*_MODEL` documented in
+  `.env.example`.
+- [ ] **Set `GEMINI_MODEL=gemini-3.5-flash-lite` (or unset it)** — the
+  machine-level value `gemini/gemini-3.1-pro-preview` has no AI Studio quota
+  (429), so the gemini lane currently falls through to OpenRouter (which
+  works). Other tools may rely on the prefixed value — change only if the
+  prefix isn't needed elsewhere.
+- Verified: **pytest 157/157**, `ruff check` 0 errors, live lane proof:
+  bynara answered, and with bynara bypassed openrouter `qwen3.8-27b:free`
+  returned OK.

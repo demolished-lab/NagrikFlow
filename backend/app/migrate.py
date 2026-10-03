@@ -155,8 +155,15 @@ def m007_seed_provenance(engine):
             s.commit()
 
 
+def m008_evidence(engine):
+    """SourceSnapshot + ChangeEvent: evidence store and change diffs."""
+    from app import models  # noqa: F401  (registers the new tables)
+    SQLModel.metadata.create_all(engine)  # checkfirst: new tables only
+
+
 MIGRATIONS = [m001_base, m002_seed_udyam, m003_security_jobs, m004_oauth_state,
-              m005_grievances, m006_service_type, m007_seed_provenance]
+              m005_grievances, m006_service_type, m007_seed_provenance,
+              m008_evidence]
 
 # Optionally add PostgreSQL-specific migrations
 _DB_URL = os.environ.get("DATABASE_URL", "sqlite:///./civic.db")

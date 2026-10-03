@@ -1,4 +1,4 @@
-"""LLM lane: Bynara cloud router FIRST, local Ollama as fallback.
+"""LLM lane: Bynara cloud router FIRST, optional free tiers, local Ollama last.
 
 Bynara free-tier five, each with a job (role routing):
 - nemotron-3-ultra-free ...... strongest free -> structured extraction
@@ -7,7 +7,14 @@ Bynara free-tier five, each with a job (role routing):
 - muse-spark-1.3-contributor-free .. plain-words briefs/summaries
 - ling-3.0-flash-fin-free .... finance-tuned -> fee/cost parsing
 
-Ollama (local, zero-cost, private) is the fallback when the router
+Free-tier adapters (env-gated, verified Sep-Oct 2026 — see
+FREE_RESOURCES.md §5): Groq (no card, no expiry), Google AI Studio/Gemini
+(`flash-lite`), OpenRouter `:free`. A key in the env joins the chain
+between Bynara and Ollama; no key = behaviour unchanged. Models are
+env-overridable (`GROQ_MODEL` etc.) so a provider rename never hard-breaks
+a lane — the chain just walks to the next one.
+
+Ollama (local, zero-cost, private) is the fallback when everything cloud
 is unreachable — and the primary when OFFLINE_ONLY=1.
 LLM only PHRASES/EXTRACTS — decisions stay in deterministic rules.
 Prompts carry vault *labels*, never raw document numbers.
@@ -38,6 +45,37 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "openbmb/minicpm5:latest")
 BYNARA_KEY = os.environ.get("BYNARA_API_KEY", "")
 BYNARA_BASE = os.environ.get("BYNARA_BASE_URL", "https://router.bynara.id/v1")
 
+# (label, base_url, model, key_env, model_env) — OpenAI-compatible endpoints.
+# Read lazily so keys/models can change per-process (tests, redeploys).
+# Defaults probed live 2026-10-04: flash-lite answers on AI Studio,
+# qwen3.8-27b:free returns clean content on OpenRouter (nemotron free
+# dumps thinking into content; llama-3.3:free was retired).
+_FREE_LANES = (
+    ("groq", "https://api.groq.com/openai/v1",
+     "GROQ_API_KEY", "GROQ_MODEL", "openai/gpt-oss-120b"),
+    ("gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
+     "GEMINI_API_KEY", "GEMINI_MODEL", "gemini-3.5-flash-lite"),
+    ("openrouter", "https://openrouter.ai/api/v1",
+     "OPENROUTER_API_KEY", "OPENROUTER_MODEL",
+     "qwen/qwen3.8-27b:free"),
+)
+
+
+def free_lanes() -> list[tuple[str, str, str, str]]:
+    """[(label, base, model, key)] for every configured free provider."""
+    out = []
+    for label, base, key_env, model_env, default_model in _FREE_LANES:
+        key = os.environ.get(key_env, "").strip()
+        if not key:
+            continue
+        model = os.environ.get(model_env, "").strip() or default_model
+        if label == "gemini":
+            # Google's OpenAI-compat endpoint wants a bare model id —
+            # router-style prefixes ("gemini/...", "models/...") 404 there.
+            model = model.removeprefix("gemini/").removeprefix("models/")
+        out.append((label, base, model, key))
+    return out
+
 
 def _chat(base: str, model: str, prompt: str, key: str = "",
           temperature: float = 0.2, max_tokens: int = 400) -> str:
@@ -57,7 +95,8 @@ def _chat(base: str, model: str, prompt: str, key: str = "",
 
 def complete(prompt: str, role: str = "extract",
              max_tokens: int = 400) -> tuple[str, str]:
-    """Return (text, via). Bynara role-chain first, Ollama fallback. Raises if none."""
+    """Return (text, via). Bynara role-chain -> configured free tiers ->
+    Ollama. Raises only when nothing at all is reachable."""
     if not OFFLINE_ONLY and BYNARA_KEY:
         for model in ROLES.get(role, ROLES["extract"]):
             try:
@@ -68,12 +107,22 @@ def complete(prompt: str, role: str = "extract",
                 warn("llm", "bynara model failed, trying next",
                      model=model, role=role, error=e)
                 continue
+    if not OFFLINE_ONLY:
+        for label, base, model, key in free_lanes():
+            try:
+                return (_chat(base, model, prompt, key,
+                              max_tokens=max_tokens),
+                        f"{label}/{model}")
+            except Exception as e:
+                warn("llm", "free-tier lane failed, trying next",
+                     lane=label, model=model, role=role, error=e)
+                continue
     try:
         return (_chat(f"{OLLAMA_BASE}/v1", OLLAMA_MODEL, prompt,
                       max_tokens=max_tokens),
                 f"ollama/{OLLAMA_MODEL}")
     except Exception as e:
-        raise RuntimeError(f"no LLM reachable (bynara + ollama): {e}")
+        raise RuntimeError(f"no LLM reachable (bynara + free tiers + ollama): {e}")
 
 
 def _chat_raw(prompt: str, max_tokens: int = 400) -> tuple[str, str]:

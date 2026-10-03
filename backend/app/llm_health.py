@@ -26,9 +26,17 @@ async def health_check() -> dict:
     result = {
         "bynara": {"configured": bool(BYNARA_API_KEY), "status": "unknown"},
         "ollama": {"configured": True, "status": "unknown"},
+        # configured free-tier adapters (groq/gemini/openrouter) — labels only
+        "free_lanes": [],
         "overall": "unknown",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    try:
+        from . import llm as llmmod
+        result["free_lanes"] = [label for label, _b, _m, _k
+                                in llmmod.free_lanes()]
+    except Exception:
+        pass
     
     # Check Bynara
     if BYNARA_API_KEY:

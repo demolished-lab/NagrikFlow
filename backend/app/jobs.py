@@ -240,10 +240,22 @@ def run_discover_build(engine, job_id: int):
             urls = discover_urls(bare)
         discovery = "search"
         if not urls:
-            urls = catalogmod.fallback_sources(
+            seeds = catalogmod.fallback_sources(
                 payload["task"], payload.get("service_type", ""),
                 payload.get("state", ""))
-            discovery = "catalog"
+            # Common Crawl archive lane: deep pages on the catalog's gov
+            # domains, found without touching the live site (CIVIC_CDX=0 off)
+            archived: list[str] = []
+            if seeds:
+                try:
+                    archived = discovermod.cdx_task_urls(enriched, seeds)
+                except Exception as e:
+                    mainmod.obsmod.warn("cdx", "archive discovery failed",
+                                        q=enriched, error=e)
+            if archived:
+                urls, discovery = archived, "cdx"
+            else:
+                urls, discovery = seeds, "catalog"
 
         def valid(candidates: list[str]) -> list[str]:
             out = []
@@ -354,6 +366,16 @@ def run_build(engine, job_id: int):
                             raise
                         _apply(m)
                 s.commit()
+            # evidence: immutable per-source snapshots (text + raw HTML +
+            # hashes) so later rechecks can produce real diffs, not just
+            # "something changed". Never fails a build.
+            try:
+                from . import evidence as evidencemod
+                evidencemod.save_snapshots(engine, p["slug"],
+                                           result.get("snapshots") or [])
+            except Exception as e:
+                warn("evidence", "snapshot persist failed",
+                     slug=p["slug"], error=e)
             base = watchmod.recheck(engine, p["slug"])
             _finish(engine, job_id, "done",
                     {"slug": p["slug"], "steps": len(result["nodes"]),
