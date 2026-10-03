@@ -1,13 +1,16 @@
+import { mkdir } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 
 // Live audit: NO route mocks — every page talks to the real backend through
 // the vite /api proxy. Fails on any page error, console error, HTTP 5xx or
 // hard network failure; warnings are printed for review.
-const SHOT_DIR = 'C:\\Users\\Raja\\AppData\\Local\\Temp\\opencode\\ui-audit';
 const benign = /favicon|__vite_ping|WebSocket|HMR|React DevTools|ERR_ABORTED|web-vitals|jsdelivr/i;
 
-test('live end-to-end UI audit: real backend, zero errors', async ({ page }) => {
+test('live end-to-end UI audit: real backend, zero errors', async ({ page }, testInfo) => {
+  test.skip(process.env.LIVE_E2E !== '1', 'Set LIVE_E2E=1 with a local backend to run this live audit.');
   test.setTimeout(600_000);
+  const shotDir = testInfo.outputPath();
+  await mkdir(shotDir, { recursive: true });
   const hard: string[] = [];
   const soft: string[] = [];
 
@@ -39,7 +42,7 @@ test('live end-to-end UI audit: real backend, zero errors', async ({ page }) => 
   await page.getByLabel('State').fill('MH');
   await page.getByRole('button', { name: 'Register' }).last().click();
   await expect(page.getByLabel('Describe your civic task')).toBeVisible({ timeout: 20_000 });
-  await page.screenshot({ path: `${SHOT_DIR}/01-home.png`, fullPage: true });
+  await page.screenshot({ path: `${shotDir}/01-home.png`, fullPage: true });
 
   // 2. real build through the concierge form (~5 min live)
   await page.getByLabel('Describe your civic task').fill('udyam registration');
@@ -49,12 +52,12 @@ test('live end-to-end UI audit: real backend, zero errors', async ({ page }) => 
   await expect(page.locator('.cv-build-status')).toBeVisible({ timeout: 15_000 });
   const doneState = page.getByText(/awaiting source review|Your reviewed pathway is ready|We couldn.t build/);
   await expect(doneState).toBeVisible({ timeout: 480_000 });
-  await page.screenshot({ path: `${SHOT_DIR}/02-build-done.png`, fullPage: true });
+  await page.screenshot({ path: `${shotDir}/02-build-done.png`, fullPage: true });
 
   // 3. pathways list
   await page.goto('/#/pathways');
   await expect(page.getByRole('heading', { name: 'My pathways' })).toBeVisible();
-  await page.screenshot({ path: `${SHOT_DIR}/03-pathways.png`, fullPage: true });
+  await page.screenshot({ path: `${shotDir}/03-pathways.png`, fullPage: true });
 
   // 4. roadmap draft: warnings banner must be visible to the citizen
   await page.getByRole('button', { name: 'Open pathway' }).first().click();
@@ -62,20 +65,20 @@ test('live end-to-end UI audit: real backend, zero errors', async ({ page }) => 
   await expect(
     page.getByText('Some sources for this pathway need your attention.'),
   ).toBeVisible({ timeout: 30_000 });
-  await page.screenshot({ path: `${SHOT_DIR}/04-roadmap-warnings.png`, fullPage: true });
+  await page.screenshot({ path: `${shotDir}/04-roadmap-warnings.png`, fullPage: true });
 
   // 5. packet: source warnings must surface here too
   await page.getByRole('button', { name: 'Load packet' }).click();
   await expect(page.getByText('Source warnings for this packet.')).toBeVisible({ timeout: 60_000 });
-  await page.screenshot({ path: `${SHOT_DIR}/05-packet-warnings.png`, fullPage: true });
+  await page.screenshot({ path: `${shotDir}/05-packet-warnings.png`, fullPage: true });
 
   // 6. documents + help surfaces
   await page.goto('/#/documents');
   await page.waitForTimeout(2000);
-  await page.screenshot({ path: `${SHOT_DIR}/06-documents.png`, fullPage: true });
+  await page.screenshot({ path: `${shotDir}/06-documents.png`, fullPage: true });
   await page.goto('/#/help');
   await page.waitForTimeout(1000);
-  await page.screenshot({ path: `${SHOT_DIR}/07-help.png`, fullPage: true });
+  await page.screenshot({ path: `${shotDir}/07-help.png`, fullPage: true });
 
   console.log('AUDIT_HARD=' + JSON.stringify(hard, null, 2));
   console.log('AUDIT_SOFT=' + JSON.stringify(soft, null, 2));

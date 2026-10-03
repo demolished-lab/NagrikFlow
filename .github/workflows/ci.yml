@@ -71,7 +71,8 @@ jobs:
       - run: npm ci --prefix frontend --no-audit --no-fund
       # supply-chain gate: moderate+ advisories fail the build (0 known now)
       - run: npm audit --prefix frontend --audit-level=moderate
-      - run: npm run build --prefix frontend
+      # Reserved non-routable origin for build validation only; deployments must set their API URL.
+      - run: VITE_API_URL=https://api.example.invalid npm run build --prefix frontend
       - run: npx playwright install --with-deps chromium
         working-directory: frontend
       - run: npm run test:e2e --prefix frontend

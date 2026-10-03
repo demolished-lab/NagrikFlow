@@ -1,28 +1,31 @@
-# Deploy — Civic Path Navigator (all free)
+# Deploy — Civic Path Navigator
 
-## Frontend → Cloudflare Pages (free, 500 builds/mo)
-1. `cd frontend && npm run build` → `dist/`
-2. Pages dashboard → Create → Upload `dist/` (or connect repo, build cmd `npm run build`, dir `dist`)
-3. Set env var: `VITE_API_URL=https://<your-backend-tunnel>` (see below), rebuild.
+## Frontend → Cloudflare Pages
 
-## Backend → any always-on machine via Cloudflare Tunnel (free, no open ports)
-1. On the host: `cloudflared tunnel --url http://localhost:8000` (or a named tunnel)
-2. Copy the `https://*.trycloudflare.com` URL → `VITE_API_URL`, DigiLocker redirect URI, Telegram `setWebhook`:
-   `https://api.telegram.org/bot<TOKEN>/setWebhook?url=<tunnel>/hooks/telegram`
-3. Run backend: `.venv-civic/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000` in `backend/`
+The frontend is a static Vite build. It cannot reach the backend through a local Vite proxy after deployment. Production builds now fail unless `VITE_API_URL` is explicitly set, preventing a published bundle from silently sending API requests to an unconfigured relative `/api` path.
 
-## Night watchman cron (Windows Task Scheduler, free)
-- Daily action: POST to `<tunnel>/admin/recheck` with admin JWT (empty slug = all maps).
-- Changed maps auto-unverify + alert linked Telegram chats.
+1. In Pages build settings, set `VITE_API_URL` to the **stable public backend origin**, for example `https://api.your-domain.example` (no `/api` suffix; the backend routes are mounted at `/`).
+2. Set the backend's `FRONTEND_ORIGINS` to the exact public site origin, e.g. `https://your-domain.example`. The default only allows `http://localhost:5173` and is not suitable for a public site.
+3. Build with `npm run build` in `frontend/` and publish `frontend/dist/`.
+4. After deployment, verify the site can register/login and call backend health/readiness endpoints from the production origin. Confirm browser preflight/CORS responses allow that exact origin.
 
-## Env checklist (backend/.env — never commit)
-APP_SECRET, ADMIN_EMAILS, FRONTEND_ORIGINS, DIGILOCKER_REDIRECT_URI,
-DIGILOCKER_CLIENT_ID/SECRET (+ENV=production after approval), TELEGRAM_BOT_TOKEN,
-BYNARA_API_KEY (done), RESEND_API_KEY or SMTP_* for mail, VITE_API_URL on the
-frontend side. `DIGILOCKER_REDIRECT_URI` must be the public backend callback URL
-(`https://<backend>/auth/digilocker/callback`).
+For a deliberate same-origin deployment, configure a real `/api` reverse proxy or Pages Function first, then set `VITE_API_URL=/api` explicitly. Vite's `/api` development proxy is not included in the static production build.
 
-## Production upgrades (when usage grows)
-SQLite → Neon/Supabase Postgres (SQLModel needs only DATABASE_URL change);
-add Redis/Celery for /admin/build-map background jobs; Postgres pgvector for
-portal-chunk retrieval.
+## Backend → stable public origin
+
+1. Run the FastAPI backend on an always-on host, bound to the intended local interface and protected by HTTPS at its public edge.
+2. Use a **named/stable Cloudflare Tunnel and owned domain** for production. Quick `trycloudflare.com` tunnels are ephemeral and should be limited to local experiments.
+3. Set backend environment variables from the production runbook; never commit `.env` or credentials. At minimum, configure a random 32+ character `APP_SECRET`, PostgreSQL `DATABASE_URL`, production `FRONTEND_ORIGINS`, and required integration credentials for the features being enabled.
+4. Set `DIGILOCKER_REDIRECT_URI` to `https://<backend-host>/auth/digilocker/callback`; use `DIGILOCKER_ENV=production` only after API Setu approval and real credentials are provisioned.
+
+## Night watchman
+
+Configure a daily authenticated request to `/admin/jobs/recheck` (empty slug checks all maps). Changed maps are automatically unverified and linked users are alerted.
+
+## Environment checklist
+
+Backend variables are managed by the host, not committed to the repository: `APP_SECRET`, `DATABASE_URL`, `ADMIN_EMAILS`, `FRONTEND_ORIGINS`, `DIGILOCKER_REDIRECT_URI`, DigiLocker client credentials, Telegram token/webhook secret, mail provider settings, and monitoring/backup credentials as needed. Optional services remain disabled until configured.
+
+## Production upgrades
+
+Use managed PostgreSQL for production; use Redis when running multiple backend workers so rate-limit state is shared. Keep backups and `/readyz` monitoring configured.
