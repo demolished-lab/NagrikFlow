@@ -107,7 +107,7 @@ export default function App() {
     setSearch('');
   };
 
-  if (authState === 'landing') return <LandingPage onLogin={() => setAuthState('login')} onRegister={() => setAuthState('register')} />;
+  if (authState === 'landing') return <LandingPage onLogin={() => setAuthState('login')} onRegister={() => setAuthState('register')} onNavigate={(tab) => navigateTo(tab === 'roadmap' ? 'pathways' : tab === 'search' || tab === 'showcase' ? 'home' : tab)} />;
   if (authState === 'login' || authState === 'register') return <LoginPanel key={authState} initialMode={authState === 'register' ? 'register' : 'login'} onLogin={onLogin} onBack={() => setAuthState('landing')} />;
 
   const profileName = profile?.name || profile?.email?.split('@')[0] || 'Your account';
