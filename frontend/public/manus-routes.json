@@ -6,6 +6,7 @@
     { "path": "/#/help", "title": "Help centre" },
     { "path": "/#/roadmap/:slug", "title": "Civic pathway roadmap" },
     { "path": "/#/agent", "title": "Research workspace" },
-    { "path": "/#/admin", "title": "Pathway verification desk" }
+    { "path": "/#/admin", "title": "Pathway verification desk" },
+    { "path": "/#/performance", "title": "Performance monitoring" }
   ]
 }

@@ -1,3 +1,5 @@
+import { recordApi } from './performance';
+
 // Prod: set VITE_API_URL to the backend URL. Dev: Vite proxies /api to localhost:8000.
 const API = (import.meta as any).env?.VITE_API_URL || '/api';
 
@@ -7,12 +9,19 @@ function headers(): Record<string, string> {
 }
 
 export async function req(path: string, opts: RequestInit = {}): Promise<any> {
-  const r = await fetch(API + path, { ...opts, headers: { ...headers(), ...(opts.headers || {}) } });
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(body.detail || r.statusText);
+  const started = performance.now();
+  try {
+    const r = await fetch(API + path, { ...opts, headers: { ...headers(), ...(opts.headers || {}) } });
+    recordApi({ path, durationMs: Math.round(performance.now() - started), ok: r.ok, status: r.status, at: Date.now() });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(body.detail || r.statusText);
+    }
+    return r.json();
+  } catch (error) {
+    if (error instanceof TypeError) recordApi({ path, durationMs: Math.round(performance.now() - started), ok: false, status: 0, at: Date.now() });
+    throw error;
   }
-  return r.json();
 }
 
 export const api = {
@@ -45,6 +54,7 @@ export const api = {
     }),
   jobStatus: (jobId: number) => req(`/jobs/${jobId}`),
   taskMap: (slug: string) => req(`/task/${encodeURIComponent(slug)}`),
+  adminMetrics: () => req('/admin/metrics'),
   // Path-workflow packet (steps + checklist + sources/guides)
   taskPacket: (slug: string) => req(`/task/${encodeURIComponent(slug)}/packet`),
   deliverPacket: (slug: string) =>

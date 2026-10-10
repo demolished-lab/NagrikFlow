@@ -113,6 +113,13 @@ async function installApiMocks(page: Page, role: 'user' | 'admin' = 'user') {
         sources: mapPayload.sources,
       }]);
     }
+    if (method === 'GET' && path === '/admin/metrics') {
+      return json({
+        '/me/profile': { hits: 4, errors: 0, avg_ms: 18.4 },
+        '/build-task': { hits: 2, errors: 0, avg_ms: 142.7 },
+        '/jobs/*': { hits: 5, errors: 0, avg_ms: 9.2 },
+      });
+    }
     if (method === 'POST' && path === `/admin/maps/${slug}/verify`) {
       return json({ ok: true, verified: Boolean(request.postDataJSON().verified) });
     }
@@ -205,6 +212,17 @@ test('administrator can inspect source freshness and trigger a source recheck', 
   await expect(page.getByText('https://udyamregistration.gov.in/')).toBeVisible();
   await page.getByRole('button', { name: 'Recheck source', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('No changes found');
+  expect(unhandled).toEqual([]);
+});
+
+test('administrator can inspect frontend and backend performance metrics', async ({ page }) => {
+  const unhandled = await installApiMocks(page, 'admin');
+  await page.goto('/#/performance');
+  await expect(page.getByRole('heading', { name: 'Performance monitoring' })).toBeVisible();
+  await expect(page.getByText('Page load')).toBeVisible();
+  await expect(page.getByText('Backend route health')).toBeVisible();
+  await expect(page.getByText('/build-task')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Refresh metrics' })).toBeVisible();
   expect(unhandled).toEqual([]);
 });
 
