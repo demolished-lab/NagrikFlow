@@ -1,0 +1,26 @@
+{
+  "schema": "nagrikflow.performance.stress.v1",
+  "generatedAt": "2026-10-11T00:46:05+05:30",
+  "url": "http://127.0.0.1:8002/admin/metrics",
+  "requests": 50,
+  "concurrency": 20,
+  "elapsedSeconds": 0.705,
+  "throughputPerSecond": 70.96,
+  "errors": 0,
+  "errorRatePercent": 0.0,
+  "statusCounts": {
+    "200": 50
+  },
+  "latencyMs": {
+    "min": 28.67,
+    "avg": 271.27,
+    "p50": 63.71,
+    "p95": 633.64,
+    "max": 653.59
+  },
+  "notes": [
+    "Authenticated /admin/metrics endpoint exercised with 20 concurrent workers.",
+    "50 requests stayed below the backend's enforced 60-request admin rate limit.",
+    "All requests returned HTTP 200 with zero measured errors."
+  ]
+}
