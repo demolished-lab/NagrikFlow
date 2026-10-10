@@ -1,0 +1,26 @@
+{
+  "schema": "nagrikflow.performance.stress.v1",
+  "generatedAt": "2026-10-11T00:44:08+05:30",
+  "url": "http://127.0.0.1:8000/readyz",
+  "requests": 200,
+  "concurrency": 25,
+  "elapsedSeconds": 1.166,
+  "throughputPerSecond": 171.53,
+  "errors": 0,
+  "errorRatePercent": 0.0,
+  "statusCounts": {
+    "200": 200
+  },
+  "latencyMs": {
+    "min": 21.5,
+    "avg": 140.01,
+    "p50": 58.47,
+    "p95": 713.38,
+    "max": 771.19
+  },
+  "notes": [
+    "Readiness endpoint was exercised with 25 concurrent workers.",
+    "All 200 requests returned HTTP 200.",
+    "The dashboard error-rate trigger defaults to 5% and can be changed in the UI."
+  ]
+}

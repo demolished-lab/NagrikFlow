@@ -47,7 +47,7 @@ const pathway = {
   sources: mapPayload.sources,
 };
 
-async function installApiMocks(page: Page, role: 'user' | 'admin' = 'user') {
+async function installApiMocks(page: Page, role: 'user' | 'admin' = 'user', errorMetrics = false) {
   const completed = new Set<string>();
   const unhandled: string[] = [];
 
@@ -116,7 +116,7 @@ async function installApiMocks(page: Page, role: 'user' | 'admin' = 'user') {
     if (method === 'GET' && path === '/admin/metrics') {
       return json({
         '/me/profile': { hits: 4, errors: 0, avg_ms: 18.4 },
-        '/build-task': { hits: 2, errors: 0, avg_ms: 142.7 },
+        '/build-task': { hits: 2, errors: errorMetrics ? 1 : 0, avg_ms: 142.7 },
         '/jobs/*': { hits: 5, errors: 0, avg_ms: 9.2 },
       });
     }
@@ -223,6 +223,19 @@ test('administrator can inspect frontend and backend performance metrics', async
   await expect(page.getByText('Backend route health')).toBeVisible();
   await expect(page.getByText('/build-task')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Refresh metrics' })).toBeVisible();
+  expect(unhandled).toEqual([]);
+});
+
+test('performance dashboard triggers an error-rate alert and exports a JSON report', async ({ page }) => {
+  const unhandled = await installApiMocks(page, 'admin', true);
+  await page.goto('/#/performance');
+  await expect(page.getByRole('alert')).toContainText('API error-rate alert triggered');
+  await expect(page.getByText('Alert active')).toBeVisible();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export JSON' }).click();
+  expect((await download).suggestedFilename()).toMatch(/^nagrikflow-performance-.*\.json$/);
+  await page.getByRole('button', { name: 'Acknowledge' }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
   expect(unhandled).toEqual([]);
 });
 

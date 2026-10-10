@@ -354,6 +354,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cv-performance-card > span { color: #6b7884; font-size: 10px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; }
 .cv-performance-card > strong { color: #122b4e; font: 700 26px/1.05 Georgia, "Times New Roman", serif; }
 .cv-performance-card > small { color: #78838e; font-size: 10px; }
+.cv-performance-alert { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; border: 1px solid #edc3b8; border-left: 4px solid #c55b4e; border-radius: 9px; background: #fff5f2; color: #7c4037; animation: cv-fade-up .25s ease both; }
+.cv-performance-alert div { display: flex; flex-direction: column; gap: 3px; }
+.cv-performance-alert strong { color: #9b4035; font-size: 12px; }
+.cv-performance-alert span { font-size: 10px; }
+.cv-performance-alert button { min-height: 30px; padding: 5px 9px; border: 1px solid #dfaca0; border-radius: 6px; background: #fff; color: #9b4035; font-size: 10px; font-weight: 800; }
+.cv-performance-alert-settings { display: flex; align-items: center; gap: 16px; padding: 12px 14px; border: 1px solid #dce7df; border-radius: 9px; background: #f8fbf8; }
+.cv-performance-alert-settings > div { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.cv-performance-alert-settings strong { color: #284d3c; font-size: 11px; }
+.cv-performance-alert-settings small { color: #718078; font-size: 10px; }
+.cv-performance-alert-settings label { display: inline-flex; align-items: center; gap: 6px; color: #52665d; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.cv-performance-alert-settings input { width: 56px; height: 30px; box-sizing: border-box; padding: 5px 6px; border: 1px solid #cbdad0; border-radius: 6px; background: #fff; color: #214f3e; font-size: 11px; }
+.cv-performance-alert-state { padding: 5px 7px; border-radius: 999px; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.cv-performance-alert-state.is-ok { background: #e7f4eb; color: #287153; }
+.cv-performance-alert-state.is-alert { background: #ffe8e1; color: #a34537; }
 .cv-performance-columns { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 15px; }
 .cv-performance-panel { min-width: 0; padding: 18px; border: 1px solid var(--civic-line); border-radius: 11px; background: #fff; box-shadow: var(--civic-shadow); }
 .cv-performance-updated, .cv-performance-live-dot { color: #6c7a85; font-size: 10px; white-space: nowrap; }
@@ -380,4 +394,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .cv-performance-actions { justify-content: space-between; }
   .cv-performance-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cv-performance-card > strong { font-size: 22px; }
+  .cv-performance-alert, .cv-performance-alert-settings { align-items: stretch; flex-direction: column; }
+  .cv-performance-alert-settings label { align-self: flex-start; }
+  .cv-performance-alert-state { align-self: flex-start; }
 }

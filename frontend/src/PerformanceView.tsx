@@ -18,6 +18,8 @@ export default function PerformanceView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshedAt, setRefreshedAt] = useState(0);
+  const [threshold, setThreshold] = useState(() => Number(localStorage.getItem('civic_performance_error_threshold') || 5));
+  const [alertAcknowledgedAt, setAlertAcknowledgedAt] = useState(0);
 
   const load = useCallback(async () => {
     setClient(snapshot());
@@ -43,18 +45,42 @@ export default function PerformanceView() {
 
   const routeRows = useMemo(() => Object.entries(server).sort(([, a], [, b]) => b.hits - a.hits).slice(0, 10), [server]);
   const latestActivity = client.activity.recent[0];
+  const serverTotals = useMemo(() => Object.values(server).reduce((totals, metric) => ({ hits: totals.hits + metric.hits, errors: totals.errors + metric.errors }), { hits: 0, errors: 0 }), [server]);
+  const clientErrorRate = client.api.count ? (client.api.errors / client.api.count) * 100 : 0;
+  const serverErrorRate = serverTotals.hits ? (serverTotals.errors / serverTotals.hits) * 100 : 0;
+  const alertRate = Math.max(clientErrorRate, serverErrorRate);
+  const alertActive = alertRate >= threshold && (client.api.count > 0 || serverTotals.hits > 0);
+  const saveThreshold = (value: number) => {
+    const next = Math.min(100, Math.max(.1, value || 5));
+    setThreshold(next);
+    localStorage.setItem('civic_performance_error_threshold', String(next));
+    setAlertAcknowledgedAt(0);
+  };
+  const exportReport = () => {
+    const report = { schema: 'nagrikflow.performance.v1', generatedAt: new Date().toISOString(), alert: { thresholdPercent: threshold, active: alertActive, observedRatePercent: Number(alertRate.toFixed(2)), clientRatePercent: Number(clientErrorRate.toFixed(2)), serverRatePercent: Number(serverErrorRate.toFixed(2)) }, client, server };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `nagrikflow-performance-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
 
   return <div className="cv-performance-view cv-anim-up">
     <header className="cv-admin-header cv-performance-header">
       <div><span className="cv-eyebrow">ADMIN TOOLS</span><h1>Performance monitoring</h1><p>Track real page speed, API responsiveness, and the latency of source-backed pathway generation.</p></div>
-      <div className="cv-performance-actions"><span className="cv-admin-role">LIVE SNAPSHOT</span><button className="cv-admin-recheck" type="button" onClick={() => void load()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh metrics'}</button></div>
+      <div className="cv-performance-actions"><span className="cv-admin-role">LIVE SNAPSHOT</span><button className="cv-admin-recheck" type="button" onClick={exportReport}>Export JSON</button><button className="cv-admin-recheck" type="button" onClick={() => void load()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh metrics'}</button></div>
     </header>
     {error && <div className="cv-admin-notice is-error" role="alert">Server metrics unavailable: {error}</div>}
+    {alertActive && alertAcknowledgedAt === 0 && <div className="cv-performance-alert" role="alert"><div><strong>API error-rate alert triggered</strong><span>{alertRate.toFixed(1)}% observed · threshold {threshold.toFixed(1)}% · {serverTotals.errors + client.api.errors} recorded errors</span></div><button type="button" onClick={() => setAlertAcknowledgedAt(Date.now())}>Acknowledge</button></div>}
+    <section className="cv-performance-alert-settings" aria-label="Error-rate alert settings"><div><strong>Automated error-rate trigger</strong><small>Alert when client or backend API errors reach this percentage.</small></div><label>Threshold <input type="number" min="0.1" max="100" step="0.1" value={threshold} onChange={(event) => saveThreshold(Number(event.target.value))} />%</label><span className={`cv-performance-alert-state ${alertActive ? 'is-alert' : 'is-ok'}`}>{alertActive ? 'Alert active' : 'Within threshold'}</span></section>
     <div className="cv-performance-grid" aria-label="Performance summary">
       <MetricCard label="Page load" value={ms(client.navigation.loadMs)} detail={`DOM ready ${ms(client.navigation.domContentLoadedMs)}`} tone="blue" />
       <MetricCard label="API average" value={ms(client.api.avgMs)} detail={`${client.api.count} calls · p95 ${ms(client.api.p95Ms)}`} tone="green" />
       <MetricCard label="Pathway activity" value={ms(latestActivity?.durationMs || client.activity.avgMs)} detail={latestActivity ? `${latestActivity.status} · ${time(latestActivity.at)}` : 'No pathway build recorded yet'} tone="amber" />
-      <MetricCard label="Client errors" value={String(client.api.errors)} detail="Network or non-2xx responses" tone={client.api.errors ? 'red' : 'green'} />
+      <MetricCard label="API error rate" value={`${alertRate.toFixed(1)}%`} detail={`${client.api.errors + serverTotals.errors} errors · threshold ${threshold.toFixed(1)}%`} tone={alertActive ? 'red' : 'green'} />
     </div>
     <div className="cv-performance-columns">
       <section className="cv-performance-panel" aria-labelledby="client-performance-heading">
