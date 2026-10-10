@@ -239,6 +239,19 @@ test('performance dashboard triggers an error-rate alert and exports a JSON repo
   expect(unhandled).toEqual([]);
 });
 
+test('authenticated NagrikFlow shell exposes service discovery and the reference showcase', async ({ page }) => {
+  const unhandled = await installApiMocks(page);
+  await page.goto('/#/search');
+  await expect(page.getByRole('button', { name: 'NagrikFlow home' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /We found .* result/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /View path for/ }).first()).toBeVisible();
+  await page.goto('/#/showcase');
+  await expect(page.getByRole('heading', { name: 'Mobile Responsive Views' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Key UI Components' })).toBeVisible();
+  expect(await page.locator('body').innerText()).not.toContain('Civic Path Navigator');
+  expect(unhandled).toEqual([]);
+});
+
 test('mobile home view stays within the viewport and keeps navigation usable', async ({ page }) => {
   await installApiMocks(page);
   await page.setViewportSize({ width: 390, height: 844 });

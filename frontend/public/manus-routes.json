@@ -1,12 +1,14 @@
 {
   "routes": [
-    { "path": "/", "title": "Civic Path Navigator" },
+    { "path": "/", "title": "NagrikFlow — Government Services Made Simple" },
+    { "path": "/#/search", "title": "Search Results and Service Discovery" },
+    { "path": "/#/showcase", "title": "NagrikFlow UI Showcase" },
     { "path": "/#/pathways", "title": "My pathways" },
     { "path": "/#/documents", "title": "Documents and progress" },
     { "path": "/#/help", "title": "Help centre" },
-    { "path": "/#/roadmap/:slug", "title": "Civic pathway roadmap" },
+    { "path": "/#/roadmap/:slug", "title": "Visual Roadmap and Dependency Graph" },
     { "path": "/#/agent", "title": "Research workspace" },
-    { "path": "/#/admin", "title": "Pathway verification desk" },
+    { "path": "/#/admin", "title": "NagrikFlow Admin Dashboard" },
     { "path": "/#/performance", "title": "Performance monitoring" }
   ]
 }

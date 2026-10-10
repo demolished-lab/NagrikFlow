@@ -11,6 +11,9 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 5173,
+      // The Manus sandbox preview uses a generated *.manus.computer host.
+      // This affects the dev server only; production builds are unchanged.
+      allowedHosts: true,
       proxy: { '/api': { target: 'http://localhost:8000', rewrite: (p) => p.replace(/^\/api/, '') } },
     },
   };
